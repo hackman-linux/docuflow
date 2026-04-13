@@ -37,6 +37,7 @@ except ImportError:
     PIL_OK = False
 
 SEPARATOR = "─" * 64
+PAGE_BREAK_MARKER = "◀━━━━━━━━━━━━━━━━━━━  PAGE BREAK  ━━━━━━━━━━━━━━━━━━━▶"
 
 # Images larger than this (in either dimension) are downscaled before JPEG encoding.
 MAX_IMAGE_DIM = 1920        # px  — reasonable for a printed document
@@ -65,12 +66,33 @@ def pillow_available() -> bool:
 # Read
 # ─────────────────────────────────────────────────────────────────────────────
 
-def read_docx(path: str) -> str:
-    """Extract all paragraph text from a .docx file."""
+def read_docx(path: str) -> tuple:
+    """
+    Extract text AND images from a .docx file.
+    Returns (text: str, images: list[bytes])
+    Each image is raw PNG/JPEG bytes in document order.
+    """
     if not DOCX_OK:
         raise RuntimeError("python-docx not installed — run: pip install python-docx")
     doc = Document(path)
-    return "\n".join(p.text for p in doc.paragraphs)
+    paragraphs = []
+    for p in doc.paragraphs:
+        paragraphs.append(p.text)
+
+    # Extract embedded images from the zip
+    images = []
+    import zipfile as _zf
+    from pathlib import Path as _P
+    _IMG_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif', '.emf', '.wmf'}
+    try:
+        with _zf.ZipFile(path, 'r') as z:
+            for name in sorted(z.namelist()):
+                if name.startswith('word/media/') and _P(name).suffix.lower() in _IMG_EXTS:
+                    images.append(z.read(name))
+    except Exception:
+        pass
+
+    return "\n".join(paragraphs), images
 
 
 def read_text_file(path: str) -> tuple[str, list[bytes]]:
@@ -106,17 +128,34 @@ def read_text_file(path: str) -> tuple[str, list[bytes]]:
 # Write — standard (no optimisation)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def write_docx(text: str, path: str) -> None:
-    """Write plain text to a .docx, keeping separator lines as border rules."""
+def write_docx(text: str, path: str, alignments: dict = None) -> None:
+    """
+    Write plain text to a .docx, honouring:
+      - separator lines  → paragraph bottom border
+      - PAGE_BREAK_MARKER → actual Word page break
+      - alignments dict  → {line_index: 'left'|'center'|'right'} for per-line alignment
+        OR a single string 'left'|'center'|'right' for whole-document alignment.
+    """
     if not DOCX_OK:
         raise RuntimeError("python-docx not installed — run: pip install python-docx")
+
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    _ALIGN = {
+        "left":   WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right":  WD_ALIGN_PARAGRAPH.RIGHT,
+    }
+
     doc = Document()
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
     style.font.size = Pt(11)
 
-    for line in text.split("\n"):
-        if line.strip() == SEPARATOR:
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        if stripped == SEPARATOR:
             p = doc.add_paragraph()
             pPr = p._p.get_or_add_pPr()
             pBdr = OxmlElement("w:pBdr")
@@ -127,8 +166,26 @@ def write_docx(text: str, path: str) -> None:
             bot.set(qn("w:color"), "1B6B3A")
             pBdr.append(bot)
             pPr.append(pBdr)
-        else:
-            doc.add_paragraph(line)
+            continue
+
+        if stripped == PAGE_BREAK_MARKER:
+            # Insert a real Word page break
+            p = doc.add_paragraph()
+            run = p.add_run()
+            run.add_break(__import__('docx.enum.text', fromlist=['WD_BREAK']).WD_BREAK.PAGE)
+            continue
+
+        p = doc.add_paragraph(line)
+
+        # Determine alignment for this paragraph
+        align_str = None
+        if isinstance(alignments, dict):
+            align_str = alignments.get(i)
+        elif isinstance(alignments, str):
+            align_str = alignments
+        if align_str in _ALIGN:
+            p.alignment = _ALIGN[align_str]
+
     doc.save(path)
 
 
@@ -136,7 +193,7 @@ def write_docx(text: str, path: str) -> None:
 # Write — optimised  (same .docx extension, smaller file)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def write_docx_optimised(text: str, path: str) -> dict:
+def write_docx_optimised(text: str, path: str, alignments: dict = None) -> dict:
     """
     Write an optimised .docx that is physically smaller than a naive export:
 
@@ -155,7 +212,7 @@ def write_docx_optimised(text: str, path: str) -> dict:
     tmp_in  = tempfile.mktemp(suffix=".docx")
     tmp_out = tempfile.mktemp(suffix=".docx")
     try:
-        write_docx(text, tmp_in)
+        write_docx(text, tmp_in, alignments)
         original_kb = os.path.getsize(tmp_in) / 1024
         images_done = _repack_docx(tmp_in, tmp_out)
         final_kb    = os.path.getsize(tmp_out) / 1024

@@ -20,18 +20,32 @@ def align_right(text):
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
+PAGE_BREAK_MARKER = "◀━━━━━━━━━━━━━━━━━━━  PAGE BREAK  ━━━━━━━━━━━━━━━━━━━▶"
+
 def remove_spaces(text):
+    """
+    Collapse spaces and trim lines.
+    Any run of 2+ consecutive blank lines is treated as a page-break and
+    replaced with PAGE_BREAK_MARKER so the transition is still visible.
+    """
     lines = text.split("\n")
-    out, blanks = [], 0
+    out = []
+    blanks = 0
     for line in lines:
         line = re.sub(r"[ \t]+", " ", line).strip()
         if not line:
             blanks += 1
-            if blanks <= 1:
-                out.append("")
         else:
+            if blanks >= 2:
+                # Multiple blank lines → page-break marker
+                out.append(PAGE_BREAK_MARKER)
+            elif blanks == 1:
+                out.append("")
             blanks = 0
             out.append(line)
+    # flush trailing blanks
+    if blanks >= 2:
+        out.append(PAGE_BREAK_MARKER)
     return "\n".join(out)
 
 def add_separator(text):
