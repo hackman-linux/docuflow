@@ -13,8 +13,21 @@ New in v2
   header shows days remaining. Expired → read-only mode with a renewal prompt.
 """
 
-import sys, os, datetime
+import sys, os, datetime, smtplib, threading, webbrowser, secrets
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# ── Owner Gmail credentials (REPLACE with your real values) ──────────────────
+# Use an App Password, not your normal Gmail password.
+# Gmail → Manage Account → Security → 2-Step Verification → App Passwords
+OWNER_EMAIL    = "your.email@gmail.com"          # ← your Gmail
+OWNER_APP_PASS = "xxxx xxxx xxxx xxxx"           # ← 16-char App Password
+NOTIFY_EMAIL   = "your.email@gmail.com"          # ← where to receive alerts
+
+# Licence pricing
+PRICE_USD   = 18          # $18 = 3-month licence  (≈ 11 000 FCFA)
+LICENCE_MONTHS = 3        # key is valid for 3 months after activation
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -47,19 +60,6 @@ from core.docx_io import (
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024   # 500 MB
 COMPACT_WIDTH    = 900                  # px — sidebar collapses below this
-LICENCE_PRICE    = "2 000 FCFA"
-GRACE_DAYS       = 3                    # days after expiry before read-only kicks in
-
-# Payment instructions shown in the Licence dialog
-PAYMENT_INFO = (
-    "To renew your DocuFlow Enterprise licence (2 000 FCFA / month):\n\n"
-    "  1.  Send 2 000 FCFA via Orange Money or MTN MoMo to:\n"
-    "         +237 6XX XXX XXX\n"
-    "      Reference: your username\n\n"
-    "  2.  Send proof of payment by WhatsApp or email.\n"
-    "      You will receive a licence key within 24 hours.\n\n"
-    "  3.  Enter the key below and click Activate."
-)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -249,69 +249,340 @@ class AuthPage(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  LICENCE DIALOG  (shown when user clicks on licence banner or key expired)
+#  EMAIL HELPER  — sends a notification to your Gmail inbox
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _send_owner_email(subject: str, body: str):
+    """Fire-and-forget email to the owner. Runs in a background thread."""
+    def _send():
+        try:
+            msg = MIMEMultipart()
+            msg["From"]    = OWNER_EMAIL
+            msg["To"]      = NOTIFY_EMAIL
+            msg["Subject"] = f"[DocuFlow] {subject}"
+            msg.attach(MIMEText(body, "plain"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
+                s.login(OWNER_EMAIL, OWNER_APP_PASS)
+                s.send_message(msg)
+        except Exception:
+            pass   # never crash the app over an email failure
+    threading.Thread(target=_send, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PAYMENT PAGE  — opened when user clicks "Don't have a key? Get one"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PaymentPage(QDialog):
+    """
+    Guides the user through purchasing a 3-month licence.
+    Shows payment options; when the user confirms payment was sent, emails
+    the owner and shows a pending confirmation message.
+    """
+
+    # ── USD amount → FCFA (rough mid-rate; update periodically) ──────────────
+    _USD_TO_XAF = 600    # 1 USD ≈ 600 FCFA
+
+    def __init__(self, user: dict, parent=None):
+        super().__init__(parent)
+        self._user = user
+        self.setWindowTitle("DocuFlow Enterprise — Get a Licence")
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(520)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
+
+        # ── Dark header banner ────────────────────────────────────────────────
+        hdr = QWidget(); hdr.setObjectName("PayHdr")
+        hdr.setFixedHeight(80)
+        hl  = QHBoxLayout(hdr); hl.setContentsMargins(32, 0, 32, 0)
+        logo = make_label("DocuFlow", "PayLogo")
+        sub  = make_label("Enterprise Licence", "PayLogoSub")
+        hl.addWidget(logo); hl.addSpacing(10); hl.addWidget(sub); hl.addStretch()
+        price_lbl = make_label(f"${PRICE_USD} / 3 months", "PayPrice")
+        hl.addWidget(price_lbl)
+        root.addWidget(hdr)
+
+        # ── Body ─────────────────────────────────────────────────────────────
+        body = QWidget(); body.setObjectName("PayBody")
+        bl   = QVBoxLayout(body); bl.setContentsMargins(32, 24, 32, 24); bl.setSpacing(18)
+
+        xaf = PRICE_USD * self._USD_TO_XAF
+        desc = make_label(
+            f"A DocuFlow Enterprise licence gives you 3 months of full access.\n"
+            f"Price: ${PRICE_USD} USD  ≈  {xaf:,} FCFA  (converted at payment time).",
+            "PayDesc"
+        )
+        desc.setWordWrap(True); bl.addWidget(desc)
+
+        # ── Payment method buttons ────────────────────────────────────────────
+        bl.addWidget(make_label("Choose how to pay:", "PaySectionLabel"))
+
+        methods = QHBoxLayout(); methods.setSpacing(10)
+
+        self._pay_btns = {}
+        payment_options = [
+            ("paypal",  "💳  PayPal",       "#003087", "#FFFFFF"),
+            ("bank",    "🏦  Bank Transfer", "#1B6B3A", "#FFFFFF"),
+            ("mtn",     "📱  MTN MoMo",     "#FFC000", "#000000"),
+            ("orange",  "📱  Orange Money", "#FF6600", "#FFFFFF"),
+        ]
+        for key, label, bg, fg in payment_options:
+            btn = QPushButton(label)
+            btn.setObjectName("PayMethodBtn")
+            btn.setStyleSheet(
+                f"QPushButton#PayMethodBtn {{ background:{bg}; color:{fg}; "
+                f"border:none; border-radius:8px; padding:12px 18px; "
+                f"font-size:13px; font-weight:600; min-height:44px; }}"
+                f"QPushButton#PayMethodBtn:hover {{ opacity: 0.85; }}"
+            )
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _, k=key: self._select_method(k))
+            self._pay_btns[key] = btn
+            methods.addWidget(btn)
+
+        bl.addLayout(methods)
+
+        # ── Dynamic instructions ──────────────────────────────────────────────
+        self._instructions = QLabel("")
+        self._instructions.setObjectName("PayInstructions")
+        self._instructions.setWordWrap(True)
+        self._instructions.setMinimumHeight(100)
+        bl.addWidget(self._instructions)
+
+        # ── Reference / name entry ────────────────────────────────────────────
+        bl.addWidget(make_label("Your name or username (for reference):", "PaySectionLabel"))
+        self._ref_in = QLineEdit()
+        self._ref_in.setPlaceholderText(user["username"])
+        self._ref_in.setText(user["username"])
+        bl.addWidget(self._ref_in)
+
+        # ── "I have paid" confirmation button ─────────────────────────────────
+        self._confirm_btn = QPushButton("✔  I have completed the payment — notify the owner")
+        self._confirm_btn.setObjectName("PayConfirmBtn")
+        self._confirm_btn.clicked.connect(self._on_confirm)
+        self._confirm_btn.setEnabled(False)
+        bl.addWidget(self._confirm_btn)
+
+        self._status_lbl = make_label("", "PayStatus")
+        self._status_lbl.setWordWrap(True)
+        bl.addWidget(self._status_lbl)
+
+        bl.addStretch()
+        root.addWidget(body, stretch=1)
+
+        # ── Footer ────────────────────────────────────────────────────────────
+        ftr = QWidget(); ftr.setObjectName("PayFooter")
+        fl  = QHBoxLayout(ftr); fl.setContentsMargins(32, 12, 32, 12)
+        fl.addWidget(make_label(
+            "After payment confirmation you will receive your licence key by email within 24 h.",
+            "PayFooterNote"
+        ))
+        fl.addStretch()
+        close = ghost_btn("Close"); close.clicked.connect(self.accept)
+        fl.addWidget(close)
+        root.addWidget(ftr)
+
+        self._selected_method = None
+
+    _INSTRUCTIONS = {
+        "paypal": (
+            "Send ${price} USD to:  <b>paypal.me/YourPayPalLink</b>\n\n"
+            "• Log in to PayPal → Send Money → Friends & Family\n"
+            "• Amount: ${price} USD\n"
+            "• Note: DocuFlow licence — {user}\n\n"
+            "Then click the button below."
+        ),
+        "bank": (
+            "Bank Transfer details:\n\n"
+            "  Bank:    Your Bank Name\n"
+            "  Account: 00000-00000-00000000000-00\n"
+            "  SWIFT:   XXXXXXXX\n"
+            "  Amount:  ${price} USD (or {xaf} FCFA)\n"
+            "  Ref:     DocuFlow-{user}\n\n"
+            "Then click the button below."
+        ),
+        "mtn": (
+            "MTN Mobile Money:\n\n"
+            "  Dial *126# → Transfer → Enter number: +237 6XX XXX XXX\n"
+            "  Amount: {xaf} FCFA\n"
+            "  Reference: DocuFlow-{user}\n\n"
+            "Then click the button below."
+        ),
+        "orange": (
+            "Orange Money:\n\n"
+            "  Dial #150*1# → Transfer → Enter number: +237 6XX XXX XXX\n"
+            "  Amount: {xaf} FCFA\n"
+            "  Reference: DocuFlow-{user}\n\n"
+            "Then click the button below."
+        ),
+    }
+
+    def _select_method(self, key: str):
+        self._selected_method = key
+        for k, b in self._pay_btns.items():
+            if k != key:
+                b.setChecked(False)
+        xaf  = PRICE_USD * self._USD_TO_XAF
+        tmpl = self._INSTRUCTIONS[key]
+        self._instructions.setText(
+            tmpl.format(price=PRICE_USD, xaf=f"{xaf:,}", user=self._user["username"])
+        )
+        self._confirm_btn.setEnabled(True)
+
+    def _on_confirm(self):
+        if not self._selected_method:
+            return
+        ref  = self._ref_in.text().strip() or self._user["username"]
+        xaf  = PRICE_USD * self._USD_TO_XAF
+        body = (
+            f"DocuFlow licence payment notification\n"
+            f"{'─'*48}\n"
+            f"Username  : {self._user['username']}  (ID {self._user['id']})\n"
+            f"Reference : {ref}\n"
+            f"Method    : {self._selected_method.upper()}\n"
+            f"Amount    : ${PRICE_USD} USD  ≈  {xaf:,} FCFA\n"
+            f"Duration  : {LICENCE_MONTHS} months\n"
+            f"Timestamp : {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"{'─'*48}\n"
+            f"Action required: verify payment and run db.create_licence({self._user['id']}, key, months={LICENCE_MONTHS})\n"
+        )
+        _send_owner_email(
+            f"Payment notification — {self._user['username']} ({self._selected_method.upper()})",
+            body
+        )
+        self._confirm_btn.setEnabled(False)
+        self._status_lbl.setObjectName("LicenceActive")
+        self._status_lbl.setText(
+            "✔  Thank you! The owner has been notified.\n"
+            "You will receive your licence key by email within 24 hours.\n"
+            "Enter it in the Activate Licence screen to unlock the app."
+        )
+        self._status_lbl.style().unpolish(self._status_lbl)
+        self._status_lbl.style().polish(self._status_lbl)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  LICENCE DIALOG  — Microsoft-style activation (key first, buy link below)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class LicenceDialog(QDialog):
+    """
+    Looks and behaves like Microsoft's product activation dialog:
+      • Key entry field front-and-centre
+      • "Don't have a key?" link beneath it → opens PaymentPage
+      • Current licence status shown at top
+    """
     def __init__(self, user: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("DocuFlow Enterprise — Licence")
-        self.setMinimumWidth(500)
-        self._user = user
+        self.setWindowTitle("DocuFlow Enterprise — Activate")
+        self.setMinimumWidth(520)
+        self._user      = user
         self._activated = False
 
-        lay = QVBoxLayout(self); lay.setSpacing(16); lay.setContentsMargins(28,28,28,28)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
 
-        # Status banner
+        # ── Dark top banner ───────────────────────────────────────────────────
+        hdr = QWidget(); hdr.setObjectName("PayHdr")
+        hdr.setFixedHeight(72)
+        hl  = QHBoxLayout(hdr); hl.setContentsMargins(28, 0, 28, 0)
+        logo = make_label("DocuFlow", "PayLogo")
+        sub  = make_label("Product Activation", "PayLogoSub")
+        hl.addWidget(logo); hl.addSpacing(10); hl.addWidget(sub); hl.addStretch()
+        root.addWidget(hdr)
+
+        # ── Body ─────────────────────────────────────────────────────────────
+        body = QWidget(); body.setObjectName("PayBody")
+        bl   = QVBoxLayout(body); bl.setContentsMargins(32, 28, 32, 20); bl.setSpacing(16)
+
+        # Current status
         days = db.licence_days_remaining(user["id"])
         lic  = db.get_active_licence(user["id"])
         if lic:
             until = datetime.datetime.strptime(lic["valid_until"], "%Y-%m-%d %H:%M:%S")
-            status_text = f"✔  Licence active — expires {until.strftime('%d %b %Y')}  ({days} days remaining)"
-            status_obj  = "LicenceActive"
+            st_text = f"✔  Licence active — expires {until.strftime('%d %b %Y')}  ({days} days remaining)"
+            st_obj  = "LicenceActive"
         else:
-            status_text = "✖  No active licence — the application is in read-only mode."
-            status_obj  = "LicenceExpired"
+            st_text = "✖  No active licence — the application is in read-only mode."
+            st_obj  = "LicenceExpired"
+        status_lbl = make_label(st_text, st_obj)
+        status_lbl.setWordWrap(True); bl.addWidget(status_lbl)
 
-        status_lbl = make_label(status_text, status_obj)
-        status_lbl.setWordWrap(True)
-        lay.addWidget(status_lbl)
+        # Separator
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #DDE8E2;"); bl.addWidget(sep)
 
-        # Payment info box
-        info = QLabel(PAYMENT_INFO)
-        info.setWordWrap(True); info.setObjectName("LicenceInfo")
-        lay.addWidget(info)
+        # Instruction
+        bl.addWidget(make_label(
+            "Enter your 25-character product key below.\n"
+            "The key looks like:  XXXX-XXXX-XXXX-XXXX",
+            "PayDesc"
+        ))
 
-        # Key entry
-        key_row = QHBoxLayout()
-        self._key_in = QLineEdit(); self._key_in.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
-        self._key_in.setObjectName("AuthInput")
-        activate_btn = QPushButton("Activate Key")
-        activate_btn.clicked.connect(self._activate)
-        key_row.addWidget(self._key_in, stretch=1)
-        key_row.addWidget(activate_btn)
-        lay.addLayout(key_row)
+        # Key entry — large, Microsoft-style
+        self._key_in = QLineEdit()
+        self._key_in.setObjectName("LicKeyInput")
+        self._key_in.setPlaceholderText("XXXX - XXXX - XXXX - XXXX")
+        self._key_in.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._key_in.returnPressed.connect(self._activate)
+        bl.addWidget(self._key_in)
 
+        # Activate button
+        act_btn = QPushButton("Activate  →")
+        act_btn.setObjectName("PayConfirmBtn")
+        act_btn.clicked.connect(self._activate)
+        bl.addWidget(act_btn)
+
+        # Message label
         self._msg = make_label("", "AuthError")
-        lay.addWidget(self._msg)
+        self._msg.setWordWrap(True); self._msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        bl.addWidget(self._msg)
 
-        close_btn = ghost_btn("Close")
-        close_btn.clicked.connect(self.accept)
-        lay.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        # "Get a key" link
+        get_key_btn = QPushButton("Don't have a product key?  →  Purchase a licence")
+        get_key_btn.setObjectName("AuthToggle")
+        get_key_btn.setFlat(True)
+        get_key_btn.clicked.connect(self._open_payment)
+        bl.addWidget(get_key_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        bl.addStretch()
+        root.addWidget(body, stretch=1)
+
+        # ── Footer ────────────────────────────────────────────────────────────
+        ftr = QWidget(); ftr.setObjectName("PayFooter")
+        fl  = QHBoxLayout(ftr); fl.setContentsMargins(28, 10, 28, 10)
+        fl.addWidget(make_label(
+            f"3-month licence: ${PRICE_USD} USD  ·  Supports MTN, Orange Money, PayPal, Bank transfer",
+            "PayFooterNote"
+        ))
+        fl.addStretch()
+        close = ghost_btn("Close"); close.clicked.connect(self.accept)
+        fl.addWidget(close)
+        root.addWidget(ftr)
 
     def _activate(self):
-        key = self._key_in.text().strip()
+        key = self._key_in.text().strip().upper()
+        # Normalise: strip spaces and re-add dashes
+        clean = key.replace("-", "").replace(" ", "")
+        if len(clean) == 16:
+            key = "-".join(clean[i:i+4] for i in range(0, 16, 4))
         if not key:
-            self._msg.setText("Please enter a licence key."); return
+            self._msg.setText("Please enter a product key."); return
         result = db.activate_licence(self._user["id"], key)
         if result["ok"]:
             self._msg.setObjectName("LicenceActive")
-            self._msg.setText(f"✔  Activated! Valid until {result['until']}.")
+            self._msg.setText(f"✔  Activated!  Licence valid until {result['until']}.")
             self._activated = True
         else:
             self._msg.setObjectName("AuthError")
             self._msg.setText(f"✖  {result['reason']}")
         self._msg.style().unpolish(self._msg); self._msg.style().polish(self._msg)
+
+    def _open_payment(self):
+        dlg = PaymentPage(self._user, self)
+        dlg.exec()
 
     def was_activated(self) -> bool:
         return self._activated
@@ -1303,130 +1574,198 @@ class MainWindow(QMainWindow):
             self.sidebar.set_compact(event.size().width() < COMPACT_WIDTH)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  STYLESHEET  (embedded fallback + disk loader)
-# ═══════════════════════════════════════════════════════════════════════════════
+def _get_qss() -> str:
+    """
+    Return the complete stylesheet.
+    ALL CSS is embedded here as a Python string so that PyInstaller --onefile
+    builds retain the full theme even when the styles/ folder is not present.
+    The disk file (if found) is merged on top so dev-mode edits still work.
+    """
+    # ── Base theme (copy of ui/styles/theme.qss) ──────────────────────────────
+    BASE_QSS = """
+* { outline: none; }
 
-EXTRA_QSS = """
-/* ── Auth page ─────────────────────────────────────────── */
+QWidget {
+    background-color: #F8FAF8;
+    color: #0D1F14;
+    font-family: "DM Sans", "Segoe UI Semibold", "SF Pro Display", sans-serif;
+    font-size: 13px;
+}
+QMainWindow, QDialog { background-color: #F8FAF8; }
+
+#Sidebar { background-color: #0E2318; min-width: 230px; max-width: 230px; }
+#logo_wrap { background-color: #0A1C12; padding: 28px 22px 20px 22px; border-bottom: 1px solid #1A3D26; }
+#logo_name { color: #FFFFFF; font-size: 20px; font-weight: 700; letter-spacing: 0.5px; }
+#logo_tag  { color: #3D8A57; font-size: 9px; letter-spacing: 3px; font-weight: 600; margin-top: 2px; }
+#nav_section_label { color: #2D6B43; font-size: 9px; letter-spacing: 2.5px; font-weight: 700; padding: 18px 22px 6px 22px; }
+
+#NavBtn {
+    background-color: transparent; color: #7AB891; border: none; border-radius: 0px;
+    padding: 11px 22px; text-align: left; font-size: 13px; font-weight: 500;
+    border-left: 3px solid transparent;
+}
+#NavBtn:hover { background-color: #132E1C; color: #C8E8D4; border-left: 3px solid #2D6B43; }
+#NavBtn[active="true"] { background-color: #173D24; color: #FFFFFF; font-weight: 600; border-left: 3px solid #2ECC71; }
+#sidebar_footer { color: #2D5C3C; font-size: 10px; padding: 16px 22px; border-top: 1px solid #1A3D26; }
+
+#Header { background-color: #FFFFFF; border-bottom: 1px solid #E4EDE7; }
+#page_title { font-size: 17px; font-weight: 700; color: #0D1F14; letter-spacing: -0.3px; }
+#session_pill { background-color: #EAF5EE; color: #1B6B3A; border: 1px solid #C2DFC9; border-radius: 20px; padding: 4px 14px; font-size: 11px; font-weight: 600; }
+
+#ActionBar { background-color: #FFFFFF; border-bottom: 1px solid #EEF3EF; padding: 8px 24px; min-height: 50px; }
+#FormatBar { background-color: #F3F8F4; border-bottom: 1px solid #DFF0E4; padding: 8px 24px; min-height: 48px; max-height: 48px; }
+#GroupLabel { color: #5A9A72; font-size: 9px; font-weight: 700; letter-spacing: 1.8px; margin-right: 4px; }
+
+#FmtBtn { background-color: #FFFFFF; color: #1A4D2E; border: 1px solid #C8DDD0; border-radius: 6px; padding: 4px 11px; font-size: 12px; font-weight: 500; min-height: 28px; min-width: 52px; }
+#FmtBtn:hover { background-color: #1B6B3A; color: #FFFFFF; border-color: #1B6B3A; }
+#FmtBtn:pressed { background-color: #145A30; }
+
+#VSep { background-color: #D8EAE0; max-width: 1px; min-width: 1px; min-height: 22px; max-height: 22px; margin: 0 8px; }
+
+#FindBar { background-color: #FAFCFA; border-bottom: 1px solid #E4EEE7; padding: 7px 24px; min-height: 44px; max-height: 44px; }
+#FindInput, #ReplaceInput { background-color: #FFFFFF; border: 1px solid #C8DDD0; border-radius: 6px; padding: 5px 10px; color: #0D1F14; font-size: 12px; min-width: 160px; max-width: 160px; }
+#FindInput:focus, #ReplaceInput:focus { border: 1.5px solid #27AE60; }
+#ReplaceBtn { background-color: #27AE60; color: #FFFFFF; border: none; border-radius: 6px; padding: 5px 16px; font-size: 12px; font-weight: 600; min-height: 28px; }
+#ReplaceBtn:hover { background-color: #2ECC71; }
+#ReplaceBtn:pressed { background-color: #1E9E54; }
+#CaseCheck { color: #4A8060; font-size: 11px; spacing: 4px; }
+
+#Editor { background-color: #FFFFFF; color: #0D1F14; border: none; padding: 24px 32px;
+          font-family: "JetBrains Mono","Cascadia Code","Fira Code","Consolas",monospace;
+          font-size: 13px; line-height: 1.7;
+          selection-background-color: #B8E4C8; selection-color: #0D1F14; }
+
+#StatusBar { background-color: #FFFFFF; border-top: 1px solid #E4EEE7; min-height: 30px; max-height: 30px; padding: 0 24px; }
+#StatLabel { color: #6A9A7A; font-size: 11px; font-weight: 500; }
+#FlashLabel { color: #1B6B3A; font-size: 11px; font-weight: 600; }
+
+#PageArea { background-color: #F8FAF8; }
+#CardTitle { font-size: 13px; font-weight: 700; color: #0D1F14; letter-spacing: -0.2px; }
+
+#SessionList, #BackupList, #LogList { background-color: #FFFFFF; border: 1px solid #DFF0E4; border-radius: 10px; padding: 4px; outline: none; }
+#SessionList::item, #BackupList::item, #LogList::item { padding: 10px 14px; border-radius: 7px; color: #1A3525; font-size: 12px; border: none; }
+#SessionList::item:selected, #BackupList::item:selected, #LogList::item:selected { background-color: #D4EDDC; color: #0E2318; font-weight: 600; }
+#SessionList::item:hover, #BackupList::item:hover, #LogList::item:hover { background-color: #EEF8F1; }
+
+QPushButton { background-color: #1B6B3A; color: #FFFFFF; border: none; border-radius: 7px; padding: 7px 18px; font-size: 12px; font-weight: 600; min-height: 32px; }
+QPushButton:hover { background-color: #22874A; }
+QPushButton:pressed { background-color: #155C30; }
+QPushButton#ghost { background-color: transparent; color: #1B6B3A; border: 1.5px solid #C2DFC9; }
+QPushButton#ghost:hover { background-color: #EAF5EE; border-color: #27AE60; }
+QPushButton#danger { background-color: transparent; color: #C0392B; border: 1.5px solid #F5C6C6; }
+QPushButton#danger:hover { background-color: #C0392B; color: #FFFFFF; border-color: #C0392B; }
+
+QLineEdit { background-color: #FFFFFF; border: 1.5px solid #C8DDD0; border-radius: 7px; padding: 7px 12px; color: #0D1F14; font-size: 13px; }
+QLineEdit:focus { border-color: #27AE60; }
+QComboBox { background-color: #FFFFFF; border: 1.5px solid #C8DDD0; border-radius: 7px; padding: 6px 12px; color: #0D1F14; font-size: 12px; min-height: 30px; min-width: 180px; }
+QComboBox:hover { border-color: #27AE60; }
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox QAbstractItemView { background: #FFFFFF; border: 1px solid #C8DDD0; border-radius: 6px; selection-background-color: #D4EDDC; selection-color: #0D1F14; padding: 4px; }
+
+QScrollBar:vertical { background: transparent; width: 7px; }
+QScrollBar::handle:vertical { background: #C2DFC9; border-radius: 4px; min-height: 32px; }
+QScrollBar::handle:vertical:hover { background: #27AE60; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { height: 0; }
+
+QDialog { background-color: #F8FAF8; }
+QLabel  { background: transparent; }
+QCheckBox { color: #3A6B4E; font-size: 12px; spacing: 6px; }
+QCheckBox::indicator { width: 15px; height: 15px; border: 1.5px solid #C2DFC9; border-radius: 4px; background: #FFFFFF; }
+QCheckBox::indicator:checked { background-color: #27AE60; border-color: #27AE60; }
+QToolTip { background-color: #0E2318; color: #C8E8D4; border: none; border-radius: 5px; padding: 5px 10px; font-size: 11px; }
+QSplitter::handle { background-color: #E4EEE7; }
+QSplitter::handle:horizontal { width: 1px; }
+"""
+
+    # ── Extra styles for v2 components ───────────────────────────────────────
+    EXTRA_QSS = """
+/* Auth page */
 #AuthPage { background-color: #F8FAF8; }
-
-#AuthBrand {
-    background-color: #0E2318;
-}
-#AuthLogo {
-    color: #FFFFFF; font-size: 32px; font-weight: 800; letter-spacing: -0.5px;
-}
-#AuthLogoTag {
-    color: #3D8A57; font-size: 10px; letter-spacing: 4px; font-weight: 700;
-}
-#AuthTagline {
-    color: #7AB891; font-size: 14px; line-height: 1.5;
-}
+#AuthBrand { background-color: #0E2318; }
+#AuthLogo { color: #FFFFFF; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }
+#AuthLogoTag { color: #3D8A57; font-size: 10px; letter-spacing: 4px; font-weight: 700; }
+#AuthTagline { color: #7AB891; font-size: 14px; }
 #AuthFooter { color: #2D5C3C; font-size: 11px; }
-
 #AuthFormWrap { background-color: #FFFFFF; }
 #AuthFormTitle { font-size: 22px; font-weight: 700; color: #0D1F14; }
-#AuthSub       { font-size: 13px; color: #6A9A7A; }
-#AuthFieldLabel{ font-size: 12px; font-weight: 600; color: #1A3525; }
-
-#AuthInput {
-    background-color: #F8FAF8;
-    border: 1.5px solid #C8DDD0;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 14px;
-    color: #0D1F14;
-    min-height: 44px;
-}
+#AuthSub { font-size: 13px; color: #6A9A7A; }
+#AuthFieldLabel { font-size: 12px; font-weight: 600; color: #1A3525; }
+#AuthInput { background-color: #F8FAF8; border: 1.5px solid #C8DDD0; border-radius: 8px; padding: 10px 14px; font-size: 14px; color: #0D1F14; min-height: 44px; }
 #AuthInput:focus { border-color: #27AE60; background-color: #FFFFFF; }
-
-#AuthBtn {
-    background-color: #1B6B3A;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 8px;
-    padding: 12px 0;
-    font-size: 14px;
-    font-weight: 700;
-    min-height: 48px;
-}
-#AuthBtn:hover  { background-color: #22874A; }
-#AuthBtn:pressed{ background-color: #155C30; }
-
-#AuthToggle {
-    background: transparent; border: none;
-    color: #27AE60; font-size: 12px; text-decoration: underline;
-    min-height: 0; padding: 0;
-}
+#AuthBtn { background-color: #1B6B3A; color: #FFFFFF; border: none; border-radius: 8px; padding: 12px 0; font-size: 14px; font-weight: 700; min-height: 48px; }
+#AuthBtn:hover { background-color: #22874A; }
+#AuthBtn:pressed { background-color: #155C30; }
+#AuthToggle { background: transparent; border: none; color: #27AE60; font-size: 12px; text-decoration: underline; min-height: 0; padding: 0; }
 #AuthToggle:hover { color: #1B6B3A; }
-
 #AuthError { color: #C0392B; font-size: 12px; }
 
-/* ── Sidebar user label & logout ────────────────────────── */
-#SidebarUser {
-    color: #7AB891; font-size: 11px; font-weight: 600;
-    padding: 10px 22px 6px 22px;
-    border-bottom: 1px solid #1A3D26;
-}
-#SidebarLogout {
-    margin: 0 14px 8px 14px;
-    color: #9A6B7B; border-color: #4A2D35;
-}
+/* Sidebar extras */
+#SidebarUser { color: #7AB891; font-size: 11px; font-weight: 600; padding: 10px 22px 6px 22px; border-bottom: 1px solid #1A3D26; }
+#SidebarLogout { margin: 0 14px 8px 14px; color: #9A6B7B; border-color: #4A2D35; }
 
-/* ── Header banner ──────────────────────────────────────── */
+/* Header banner */
 #HeaderTitleRow { background-color: #FFFFFF; border-bottom: 1px solid #E4EDE7; }
-
 #LicenceBannerOk      { background-color: #1B6B3A; }
 #LicenceBannerWarn    { background-color: #B7770D; }
 #LicenceBannerExpired { background-color: #8B1A1A; }
-
 #BannerLabel { color: #FFFFFF; font-size: 11px; font-weight: 600; letter-spacing: 0.3px; }
 
-/* ── Licence dialog ─────────────────────────────────────── */
+/* Licence / payment dialogs */
 #LicenceActive  { color: #1B6B3A; font-weight: 600; font-size: 13px; }
 #LicenceExpired { color: #C0392B; font-weight: 600; font-size: 13px; }
-#LicenceInfo    { color: #1A3525; font-size: 12px; line-height: 1.6;
-                  background-color: #F3F8F4; border-radius: 8px;
-                  padding: 14px 18px; border: 1px solid #C8DDD0; }
 
-/* ── Rich-text bar ──────────────────────────────────────── */
-#RichBar {
+#PayHdr { background-color: #0E2318; }
+#PayLogo { color: #FFFFFF; font-size: 22px; font-weight: 800; }
+#PayLogoSub { color: #7AB891; font-size: 13px; font-weight: 500; }
+#PayPrice { color: #2ECC71; font-size: 18px; font-weight: 700; }
+#PayBody { background-color: #FFFFFF; }
+#PayFooter { background-color: #F3F8F4; border-top: 1px solid #DFF0E4; }
+#PayDesc { color: #1A3525; font-size: 13px; line-height: 1.5; }
+#PaySectionLabel { color: #5A9A72; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; }
+#PayInstructions { background-color: #F3F8F4; border: 1px solid #C8DDD0; border-radius: 8px; padding: 14px 18px; color: #1A3525; font-size: 12px; min-height: 90px; }
+#PayStatus { color: #1B6B3A; font-size: 12px; font-weight: 600; }
+#PayFooterNote { color: #6A9A7A; font-size: 11px; }
+#PayConfirmBtn { background-color: #1B6B3A; color: #FFFFFF; border: none; border-radius: 8px; padding: 12px 0; font-size: 13px; font-weight: 700; min-height: 46px; }
+#PayConfirmBtn:hover { background-color: #22874A; }
+#PayConfirmBtn:disabled { background-color: #A8C4B0; color: #FFFFFF; }
+
+/* Key input — large Microsoft-style */
+#LicKeyInput {
     background-color: #FFFFFF;
-    border-bottom: 1px solid #EEF3EF;
-    padding: 4px 24px;
+    border: 2px solid #C8DDD0;
+    border-radius: 10px;
+    padding: 14px 20px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #0D1F14;
+    letter-spacing: 4px;
+    min-height: 56px;
 }
+#LicKeyInput:focus { border-color: #27AE60; }
 
+/* Rich-text bar */
+#RichBar { background-color: #FFFFFF; border-bottom: 1px solid #EEF3EF; padding: 4px 24px; }
 #RichBtnBold   { font-weight: 800; font-size: 14px; min-width: 32px; }
 #RichBtnItalic { font-style: italic; font-size: 14px; min-width: 32px; }
 #RichBtnUnder  { text-decoration: underline; font-size: 14px; min-width: 32px; }
-
-#RichBtnBold:checked, #RichBtnItalic:checked, #RichBtnUnder:checked {
-    background-color: #1B6B3A;
-    color: #FFFFFF;
-    border-color: #1B6B3A;
-}
-
+#RichBtnBold:checked, #RichBtnItalic:checked, #RichBtnUnder:checked { background-color: #1B6B3A; color: #FFFFFF; border-color: #1B6B3A; }
 #FontCombo { min-width: 160px; max-width: 200px; font-size: 12px; }
-
-#FontSizeSpin {
-    background-color: #FFFFFF;
-    border: 1.5px solid #C8DDD0;
-    border-radius: 6px;
-    padding: 4px 6px;
-    font-size: 12px;
-    color: #0D1F14;
-}
+#FontSizeSpin { background-color: #FFFFFF; border: 1.5px solid #C8DDD0; border-radius: 6px; padding: 4px 6px; font-size: 12px; color: #0D1F14; }
 """
 
-def _get_qss() -> str:
+    # Try to load fresh disk copy (dev mode); fall back to full embedded string
+    disk_extra = ""
     qss_path = os.path.join(os.path.dirname(__file__), "styles", "theme.qss")
-    base = ""
     if os.path.exists(qss_path):
         try:
             with open(qss_path, encoding="utf-8") as f:
-                base = f.read()
-        except Exception: pass
+                disk_extra = f.read()
+        except Exception:
+            pass
+
+    # If disk file found, use it as base (dev mode); otherwise use embedded BASE_QSS
+    base = disk_extra if disk_extra else BASE_QSS
     return base + "\n" + EXTRA_QSS
 
 def _load_qss(app):
