@@ -29,8 +29,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from core import db
 
 # ── Owner email (same as in app.py) ─────────────────────────────────────────
-OWNER_EMAIL    = "your.email@gmail.com"
-OWNER_APP_PASS = "xxxx xxxx xxxx xxxx"
+OWNER_EMAIL    = "ndjodongouhs@gmail.com"
+OWNER_APP_PASS = "umja ibgf hsgy oejq"
 LICENCE_MONTHS = 3
 
 

@@ -1,398 +1,189 @@
 /* ================================================================
-   DocuFlow Enterprise  ·  Premium Green & White Theme
-   Typefaces: DM Sans (UI) · JetBrains Mono (editor)
+   DocuFlow Enterprise v3  ·  Luxury Dark-Emerald Theme
    ================================================================ */
-
 * { outline: none; }
+QWidget { background-color: #F0F4F1; color: #0A1A0F;
+    font-family: "Outfit","DM Sans","Segoe UI",sans-serif; font-size: 13px; }
+QMainWindow { background-color: #0A1A0F; }
+QDialog     { background-color: #FAFCFA; }
+QLabel      { background: transparent; }
 
-QWidget {
-    background-color: #F8FAF8;
-    color: #0D1F14;
-    font-family: "DM Sans", "Segoe UI Semibold", "SF Pro Display", sans-serif;
-    font-size: 13px;
-}
+/* SIDEBAR */
+#Sidebar { background-color: #071610; min-width: 220px; max-width: 220px; border-right: 2px solid #1E5035; }
+#logo_wrap { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0D2419,stop:1 #071610);
+    padding: 26px 20px 22px 20px; border-bottom: 2px solid #1E6040; }
+#logo_name { color: #FFFFFF; font-size: 22px; font-weight: 800; letter-spacing: -0.8px; }
+#logo_tag  { color: #2ECC71; font-size: 8px; letter-spacing: 5px; font-weight: 700; margin-top: 3px; }
+#SidebarUser { color: #52A875; font-size: 11px; font-weight: 600;
+    padding: 12px 20px 10px 20px; border-bottom: 1px solid #1A3528; background-color: #091D14; }
+#nav_section_label { color: #1E6040; font-size: 8px; letter-spacing: 3px; font-weight: 800;
+    padding: 16px 20px 6px 20px; border-bottom: 1px solid #122A1E; }
+#NavBtn { background-color: transparent; color: #6AAE86; border: none; border-radius: 0;
+    padding: 12px 20px; text-align: left; font-size: 13px; font-weight: 500;
+    border-left: 3px solid transparent; border-bottom: 1px solid #0F2A1E; }
+#NavBtn:hover { background-color: #0F2A1E; color: #C8F0D8; border-left: 3px solid #2ECC71; }
+#NavBtn[active="true"] { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #163A26,stop:1 #0F2A1E);
+    color: #FFFFFF; font-weight: 700; border-left: 3px solid #2ECC71; }
+#SidebarLogout { background-color: transparent; color: #8B4560; border: 1px solid #3A1525;
+    border-radius: 6px; margin: 8px 14px; padding: 7px 16px; font-size: 11px; font-weight: 600; }
+#SidebarLogout:hover { background-color: #3A1525; color: #F08099; border-color: #8B4560; }
+#sidebar_footer { color: #1A4030; font-size: 9px; letter-spacing: 0.5px;
+    padding: 14px 20px; border-top: 1px solid #122A1E; }
 
-QMainWindow, QDialog {
-    background-color: #F8FAF8;
-}
+/* LICENCE BANNER */
+#LicenceBannerOk      { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #0D5C2E,stop:1 #146B38); min-height:30px; max-height:30px; }
+#LicenceBannerWarn    { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7A4A00,stop:1 #9A6000); min-height:30px; max-height:30px; }
+#LicenceBannerExpired { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7A0000,stop:1 #A01010); min-height:30px; max-height:30px; }
+#LicenceBannerTrial   { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1A3A7A,stop:1 #1E4A9A); min-height:30px; max-height:30px; }
+#BannerLabel { color: #FFFFFF; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
 
-/* ── Sidebar ──────────────────────────────────────────── */
-#Sidebar {
-    background-color: #0E2318;
-    min-width: 230px;
-    max-width: 230px;
-}
+/* HEADER */
+#HeaderTitleRow { background-color: #FFFFFF; border-bottom: 1px solid #D8EAE0; min-height:52px; max-height:52px; }
+#page_title { font-size: 16px; font-weight: 800; color: #071610; letter-spacing: -0.5px; }
+#session_pill { background-color: #E8F5EE; color: #0D5C2E; border: 1.5px solid #A8D8B8;
+    border-radius: 20px; padding: 4px 14px; font-size: 11px; font-weight: 700; }
 
-#logo_wrap {
-    background-color: #0A1C12;
-    padding: 28px 22px 20px 22px;
-    border-bottom: 1px solid #1A3D26;
-}
+/* RIBBON */
+#RibbonTabBar { background-color: #FFFFFF; border-bottom: 2px solid #C0D8C8; padding: 0 24px; min-height:36px; max-height:36px; }
+#RibbonTab { background-color: transparent; color: #5A8A6A; border: none;
+    border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 18px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.3px; min-height:36px; margin-bottom:-2px; }
+#RibbonTab:hover { color: #0D5C2E; background-color: #F0F8F3; }
+#RibbonTab[active="true"] { color: #071610; font-weight: 800; border-bottom: 2px solid #1B8040; }
 
-#logo_name {
-    color: #FFFFFF;
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-}
+#RibbonPanel { background-color: #FAFCFA; border-bottom: 2px solid #C8E0D0; padding: 8px 24px; min-height:68px; max-height:68px; }
+#RibbonGroupLabel { color: #4A8060; font-size: 8px; font-weight: 800; letter-spacing: 2px; margin-top: 3px; }
+#RibbonBtn { background-color: transparent; color: #1A4D2E; border: 1px solid transparent;
+    border-radius: 5px; padding: 5px 10px; font-size: 11px; font-weight: 600; min-height:34px; min-width:46px; }
+#RibbonBtn:hover { background-color: #E0F0E8; border-color: #A8D8B8; }
+#RibbonBtn:pressed { background-color: #C8E8D0; border-color: #1B8040; }
+#RibbonBtn[active="true"] { background-color: #1B6B3A; color: #FFFFFF; border-color: #1B6B3A; }
+#RibbonBtnPrimary { background-color: #1B6B3A; color: #FFFFFF; border: none;
+    border-radius: 6px; padding: 7px 14px; font-size: 12px; font-weight: 700; min-height:36px; }
+#RibbonBtnPrimary:hover { background-color: #22874A; }
 
-#logo_tag {
-    color: #3D8A57;
-    font-size: 9px;
-    letter-spacing: 3px;
-    font-weight: 600;
-    margin-top: 2px;
-}
+/* SESSION ROW */
+#SessionRow { background-color: #FFFFFF; border-bottom: 1px solid #E8F0EA; padding: 6px 24px; min-height:44px; max-height:44px; }
 
-#nav_section_label {
-    color: #2D6B43;
-    font-size: 9px;
-    letter-spacing: 2.5px;
-    font-weight: 700;
-    padding: 18px 22px 6px 22px;
-}
+/* RICH BAR */
+#RichBar { background-color: #FFFFFF; border-bottom: 1px solid #E8F0EA; padding: 0 24px; min-height:44px; max-height:44px; }
+#GroupLabel { color: #5A8A6A; font-size: 8px; font-weight: 800; letter-spacing: 2px; margin-right: 6px; }
+#RichBtnBold   { font-weight: 900; font-size: 14px; min-width:34px; background-color:#F0F6F2; color:#1A4D2E; border:1px solid #C8DDD0; border-radius:5px; padding:5px; min-height:30px; }
+#RichBtnItalic { font-style: italic; font-size: 14px; min-width:34px; background-color:#F0F6F2; color:#1A4D2E; border:1px solid #C8DDD0; border-radius:5px; padding:5px; min-height:30px; }
+#RichBtnUnder  { text-decoration: underline; font-size: 14px; min-width:34px; background-color:#F0F6F2; color:#1A4D2E; border:1px solid #C8DDD0; border-radius:5px; padding:5px; min-height:30px; }
+#RichBtnBold:checked, #RichBtnItalic:checked, #RichBtnUnder:checked { background-color:#1B6B3A; color:#FFFFFF; border-color:#1B6B3A; }
+#RichBtnBold:hover, #RichBtnItalic:hover, #RichBtnUnder:hover { background-color:#D8EEE0; border-color:#27AE60; }
+#FontCombo { min-width:155px; max-width:180px; font-size:12px; }
+#FontSizeSpin { min-width:50px; max-width:50px; font-size:12px; font-weight:700; }
 
-#NavBtn {
-    background-color: transparent;
-    color: #7AB891;
-    border: none;
-    border-radius: 0px;
-    padding: 11px 22px;
-    text-align: left;
-    font-size: 13px;
-    font-weight: 500;
-    border-left: 3px solid transparent;
-}
+/* FIND BAR */
+#FindBar { background-color: #F8FAF8; border-bottom: 1px solid #D8EAE0; padding: 7px 24px; min-height:44px; max-height:44px; }
+#FindInput, #ReplaceInput { background-color:#FFFFFF; border:1px solid #C0D8C8; border-radius:5px; padding:5px 10px; color:#0A1A0F; font-size:12px; min-width:160px; max-width:180px; }
+#FindInput:focus, #ReplaceInput:focus { border:1.5px solid #1B8040; }
+#ReplaceBtn { background-color:#1B8040; color:#FFFFFF; border:none; border-radius:5px; padding:5px 16px; font-size:12px; font-weight:700; min-height:30px; }
+#ReplaceBtn:hover { background-color:#2ECC71; color:#071610; }
+#CaseCheck { color:#4A8060; font-size:11px; spacing:4px; }
 
-#NavBtn:hover {
-    background-color: #132E1C;
-    color: #C8E8D4;
-    border-left: 3px solid #2D6B43;
-}
+/* EDITOR */
+#Editor { background-color:#FFFFFF; color:#0A1A0F; border:none; padding:28px 40px;
+    font-family:"JetBrains Mono","Cascadia Code","Fira Code","Consolas",monospace;
+    font-size:13px; selection-background-color:#B0E8C8; selection-color:#071610; }
 
-#NavBtn[active="true"] {
-    background-color: #173D24;
-    color: #FFFFFF;
-    font-weight: 600;
-    border-left: 3px solid #2ECC71;
-}
+/* STATUS BAR */
+#StatusBar { background-color:#071610; border-top:1px solid #1A3528; min-height:28px; max-height:28px; padding:0 24px; }
+#StatLabel  { color:#3A7055; font-size:11px; font-weight:600; }
+#FlashLabel { color:#2ECC71; font-size:11px; font-weight:700; }
 
-#sidebar_footer {
-    color: #2D5C3C;
-    font-size: 10px;
-    padding: 16px 22px;
-    border-top: 1px solid #1A3D26;
-}
+/* PAGES & CARDS */
+#PageArea   { background-color:#F0F4F1; }
+#CardTitle  { font-size:12px; font-weight:800; color:#071610; letter-spacing:0.2px; text-transform:uppercase; }
+#SessionList,#BackupList,#LogList { background-color:#FFFFFF; border:1.5px solid #C8DDD0; border-radius:8px; padding:4px; outline:none; }
+#SessionList::item,#BackupList::item,#LogList::item { padding:10px 14px; border-radius:6px; color:#1A3528; font-size:12px; border-bottom:1px solid #EEF5F0; }
+#SessionList::item:selected,#BackupList::item:selected,#LogList::item:selected { background-color:#C8EDD8; color:#071610; font-weight:700; }
+#SessionList::item:hover,#BackupList::item:hover,#LogList::item:hover { background-color:#EAF5EE; }
 
-/* ── Top Header ───────────────────────────────────────── */
-#Header {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #E4EDE7;
-    min-height: 58px;
-    max-height: 58px;
-    padding: 0px 28px;
-}
+/* BUTTONS */
+QPushButton { background-color:#1B6B3A; color:#FFFFFF; border:none; border-radius:6px; padding:7px 18px; font-size:12px; font-weight:700; min-height:32px; }
+QPushButton:hover   { background-color:#22874A; }
+QPushButton:pressed { background-color:#145C30; }
+QPushButton#ghost   { background-color:transparent; color:#1B6B3A; border:1.5px solid #A8D8B8; font-weight:600; }
+QPushButton#ghost:hover { background-color:#EAF5EE; border-color:#1B8040; }
+QPushButton#danger  { background-color:transparent; color:#C03030; border:1.5px solid #F0C0C0; font-weight:600; }
+QPushButton#danger:hover { background-color:#C03030; color:#FFFFFF; border-color:#C03030; }
 
-#page_title {
-    font-size: 17px;
-    font-weight: 700;
-    color: #0D1F14;
-    letter-spacing: -0.3px;
-}
+/* VSEP — now clearly visible */
+#VSep { background-color:#B0D0BC; max-width:1px; min-width:1px; min-height:24px; max-height:24px; margin:0 6px; }
 
-#session_pill {
-    background-color: #EAF5EE;
-    color: #1B6B3A;
-    border: 1px solid #C2DFC9;
-    border-radius: 20px;
-    padding: 4px 14px;
-    font-size: 11px;
-    font-weight: 600;
-}
+/* INPUTS */
+QLineEdit { background-color:#FFFFFF; border:1.5px solid #C0D8C8; border-radius:6px; padding:7px 12px; color:#0A1A0F; font-size:13px; }
+QLineEdit:focus { border-color:#1B8040; }
+QComboBox { background-color:#FFFFFF; border:1.5px solid #C0D8C8; border-radius:6px; padding:6px 12px; color:#0A1A0F; font-size:12px; min-height:30px; min-width:180px; }
+QComboBox:hover { border-color:#1B8040; }
+QComboBox::drop-down { border:none; width:22px; }
+QComboBox QAbstractItemView { background:#FFFFFF; border:1px solid #C0D8C8; border-radius:6px; selection-background-color:#C8EDD8; selection-color:#071610; padding:4px; }
+QSpinBox { background-color:#FFFFFF; border:1.5px solid #C0D8C8; border-radius:6px; padding:4px 8px; color:#0A1A0F; font-size:12px; }
 
-/* ── Action Bar (import/export/session row) ───────────── */
-#ActionBar {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #EEF3EF;
-    padding: 8px 24px;
-    min-height: 50px;
-    max-height: 50px;
-}
+/* SCROLLBARS */
+QScrollBar:vertical { background:transparent; width:6px; }
+QScrollBar::handle:vertical { background:#B8D8C4; border-radius:3px; min-height:28px; }
+QScrollBar::handle:vertical:hover { background:#27AE60; }
+QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
+QScrollBar:horizontal { height:0; }
 
-/* ── Format Toolbar ───────────────────────────────────── */
-#FormatBar {
-    background-color: #F3F8F4;
-    border-bottom: 1px solid #DFF0E4;
-    padding: 8px 24px;
-    min-height: 48px;
-    max-height: 48px;
-}
+/* MISC */
+QCheckBox { color:#3A7055; font-size:12px; spacing:6px; }
+QCheckBox::indicator { width:15px; height:15px; border:1.5px solid #B8D8C4; border-radius:4px; background:#FFFFFF; }
+QCheckBox::indicator:checked { background-color:#1B8040; border-color:#1B8040; }
+QToolTip { background-color:#071610; color:#B0E8C8; border:1px solid #1E4030; border-radius:5px; padding:5px 10px; font-size:11px; }
+QSplitter::handle { background-color:#C0D8C8; }
+QSplitter::handle:horizontal { width:1px; }
+QSplitter::handle:vertical   { height:1px; }
+QDialog { background-color:#FAFCFA; }
 
-#GroupLabel {
-    color: #5A9A72;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 1.8px;
-    margin-right: 4px;
-}
+/* AUTH PAGE */
+#AuthPage    { background-color:#F0F4F1; }
+#AuthBrand   { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0A1A0F,stop:1 #0D2419); }
+#AuthLogo    { color:#FFFFFF; font-size:34px; font-weight:900; letter-spacing:-1px; }
+#AuthLogoTag { color:#2ECC71; font-size:9px; letter-spacing:5px; font-weight:800; }
+#AuthTagline { color:#6AAE86; font-size:14px; }
+#AuthFeature { color:#2ECC71; font-size:12px; font-weight:600; }
+#AuthFooter  { color:#1A4030; font-size:10px; }
+#AuthFormWrap  { background-color:#FFFFFF; }
+#AuthFormTitle { font-size:24px; font-weight:800; color:#071610; letter-spacing:-0.5px; }
+#AuthSub       { font-size:13px; color:#5A8A6A; }
+#AuthFieldLabel{ font-size:11px; font-weight:700; color:#1A3528; letter-spacing:0.5px; }
+#AuthInput  { background-color:#F5F9F5; border:1.5px solid #C0D8C8; border-radius:8px; padding:12px 16px; font-size:14px; color:#071610; min-height:46px; }
+#AuthInput:focus { border-color:#1B8040; background-color:#FFFFFF; }
+#AuthBtn    { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #22874A,stop:1 #1B6B3A); color:#FFFFFF; border:none; border-radius:8px; padding:13px 0; font-size:14px; font-weight:800; min-height:50px; }
+#AuthBtn:hover   { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2ECC71,stop:1 #22874A); }
+#AuthBtn:pressed { background-color:#145C30; }
+#AuthToggle { background:transparent; border:none; color:#1B8040; font-size:12px; font-weight:600; text-decoration:underline; min-height:0; padding:0; }
+#AuthToggle:hover { color:#071610; }
+#AuthError   { color:#C03030; font-size:12px; font-weight:600; }
+#AuthSuccess { color:#1B8040; font-size:12px; font-weight:600; }
 
-/* Toolbar buttons */
-#FmtBtn {
-    background-color: #FFFFFF;
-    color: #1A4D2E;
-    border: 1px solid #C8DDD0;
-    border-radius: 6px;
-    padding: 4px 11px;
-    font-size: 12px;
-    font-weight: 500;
-    min-height: 28px;
-    min-width: 52px;
-}
-
-#FmtBtn:hover {
-    background-color: #1B6B3A;
-    color: #FFFFFF;
-    border-color: #1B6B3A;
-}
-
-#FmtBtn:pressed {
-    background-color: #145A30;
-}
-
-#VSep {
-    background-color: #D8EAE0;
-    max-width: 1px;
-    min-width: 1px;
-    min-height: 22px;
-    max-height: 22px;
-    margin: 0 8px;
-}
-
-/* ── Find & Replace Bar ───────────────────────────────── */
-#FindBar {
-    background-color: #FAFCFA;
-    border-bottom: 1px solid #E4EEE7;
-    padding: 7px 24px;
-    min-height: 44px;
-    max-height: 44px;
-}
-
-#FindInput, #ReplaceInput {
-    background-color: #FFFFFF;
-    border: 1px solid #C8DDD0;
-    border-radius: 6px;
-    padding: 5px 10px;
-    color: #0D1F14;
-    font-size: 12px;
-    min-width: 160px;
-    max-width: 160px;
-}
-
-#FindInput:focus, #ReplaceInput:focus {
-    border: 1.5px solid #27AE60;
-}
-
-#ReplaceBtn {
-    background-color: #27AE60;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 6px;
-    padding: 5px 16px;
-    font-size: 12px;
-    font-weight: 600;
-    min-height: 28px;
-}
-
-#ReplaceBtn:hover  { background-color: #2ECC71; }
-#ReplaceBtn:pressed{ background-color: #1E9E54; }
-
-#CaseCheck {
-    color: #4A8060;
-    font-size: 11px;
-    spacing: 4px;
-}
-
-/* ── Editor ───────────────────────────────────────────── */
-#Editor {
-    background-color: #FFFFFF;
-    color: #0D1F14;
-    border: none;
-    padding: 24px 32px;
-    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: 13px;
-    line-height: 1.7;
-    selection-background-color: #B8E4C8;
-    selection-color: #0D1F14;
-}
-
-/* ── Status Bar ───────────────────────────────────────── */
-#StatusBar {
-    background-color: #FFFFFF;
-    border-top: 1px solid #E4EEE7;
-    min-height: 30px;
-    max-height: 30px;
-    padding: 0 24px;
-}
-
-#StatLabel {
-    color: #6A9A7A;
-    font-size: 11px;
-    font-weight: 500;
-}
-
-#FlashLabel {
-    color: #1B6B3A;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-/* ── Sessions Page ────────────────────────────────────── */
-#PageArea {
-    background-color: #F8FAF8;
-}
-
-#CardTitle {
-    font-size: 13px;
-    font-weight: 700;
-    color: #0D1F14;
-    letter-spacing: -0.2px;
-}
-
-#SessionList, #BackupList, #LogList {
-    background-color: #FFFFFF;
-    border: 1px solid #DFF0E4;
-    border-radius: 10px;
-    padding: 4px;
-    outline: none;
-}
-
-#SessionList::item, #BackupList::item, #LogList::item {
-    padding: 10px 14px;
-    border-radius: 7px;
-    color: #1A3525;
-    font-size: 12px;
-    border: none;
-}
-
-#SessionList::item:selected, #BackupList::item:selected, #LogList::item:selected {
-    background-color: #D4EDDC;
-    color: #0E2318;
-    font-weight: 600;
-}
-
-#SessionList::item:hover, #BackupList::item:hover, #LogList::item:hover {
-    background-color: #EEF8F1;
-}
-
-/* ── Buttons ──────────────────────────────────────────── */
-QPushButton {
-    background-color: #1B6B3A;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 7px;
-    padding: 7px 18px;
-    font-size: 12px;
-    font-weight: 600;
-    min-height: 32px;
-}
-QPushButton:hover  { background-color: #22874A; }
-QPushButton:pressed{ background-color: #155C30; }
-
-QPushButton#ghost {
-    background-color: transparent;
-    color: #1B6B3A;
-    border: 1.5px solid #C2DFC9;
-}
-QPushButton#ghost:hover {
-    background-color: #EAF5EE;
-    border-color: #27AE60;
-}
-
-QPushButton#danger {
-    background-color: transparent;
-    color: #C0392B;
-    border: 1.5px solid #F5C6C6;
-}
-QPushButton#danger:hover {
-    background-color: #C0392B;
-    color: #FFFFFF;
-    border-color: #C0392B;
-}
-
-/* ── Inputs ───────────────────────────────────────────── */
-QLineEdit {
-    background-color: #FFFFFF;
-    border: 1.5px solid #C8DDD0;
-    border-radius: 7px;
-    padding: 7px 12px;
-    color: #0D1F14;
-    font-size: 13px;
-}
-QLineEdit:focus { border-color: #27AE60; }
-
-QComboBox {
-    background-color: #FFFFFF;
-    border: 1.5px solid #C8DDD0;
-    border-radius: 7px;
-    padding: 6px 12px;
-    color: #0D1F14;
-    font-size: 12px;
-    min-height: 30px;
-    min-width: 180px;
-}
-QComboBox:hover { border-color: #27AE60; }
-QComboBox::drop-down { border: none; width: 22px; }
-QComboBox QAbstractItemView {
-    background: #FFFFFF;
-    border: 1px solid #C8DDD0;
-    border-radius: 6px;
-    selection-background-color: #D4EDDC;
-    selection-color: #0D1F14;
-    padding: 4px;
-}
-
-/* ── Scrollbars ───────────────────────────────────────── */
-QScrollBar:vertical {
-    background: transparent;
-    width: 7px;
-}
-QScrollBar::handle:vertical {
-    background: #C2DFC9;
-    border-radius: 4px;
-    min-height: 32px;
-}
-QScrollBar::handle:vertical:hover { background: #27AE60; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-
-QScrollBar:horizontal { height: 0; }
-
-/* ── Dialog ───────────────────────────────────────────── */
-QDialog { background-color: #F8FAF8; }
-QLabel  { background: transparent; }
-
-/* ── Checkbox ─────────────────────────────────────────── */
-QCheckBox { color: #3A6B4E; font-size: 12px; spacing: 6px; }
-QCheckBox::indicator {
-    width: 15px; height: 15px;
-    border: 1.5px solid #C2DFC9;
-    border-radius: 4px;
-    background: #FFFFFF;
-}
-QCheckBox::indicator:checked {
-    background-color: #27AE60;
-    border-color: #27AE60;
-}
-
-/* ── Tooltip ──────────────────────────────────────────── */
-QToolTip {
-    background-color: #0E2318;
-    color: #C8E8D4;
-    border: none;
-    border-radius: 5px;
-    padding: 5px 10px;
-    font-size: 11px;
-}
-
-/* ── Splitter ─────────────────────────────────────────── */
-QSplitter::handle { background-color: #E4EEE7; }
-QSplitter::handle:horizontal { width: 1px; }
+/* PAYMENT / LICENCE DIALOGS */
+#LicenceActive  { color:#1B6B3A; font-weight:700; font-size:13px; }
+#LicenceExpired { color:#C03030; font-weight:700; font-size:13px; }
+#PayHdr  { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #071610,stop:1 #0D2419); min-height:80px; }
+#PayLogo { color:#FFFFFF; font-size:22px; font-weight:900; }
+#PayLogoSub { color:#52A875; font-size:13px; }
+#PayPrice   { color:#2ECC71; font-size:22px; font-weight:900; }
+#PayBody    { background-color:#FFFFFF; }
+#PayFooter  { background-color:#F5F9F5; border-top:1px solid #D0E8D8; }
+#PayDesc    { color:#1A3528; font-size:13px; }
+#PaySectionLabel { color:#4A8060; font-size:9px; font-weight:800; letter-spacing:2px; }
+#PayInstructions { background-color:#F5F9F5; border:1px solid #C0D8C8; border-radius:8px; padding:14px 18px; color:#1A3528; font-size:12px; min-height:90px; }
+#PayStatus    { color:#1B6B3A; font-size:12px; font-weight:700; }
+#PayFooterNote{ color:#5A8A6A; font-size:11px; }
+#PayConfirmBtn { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #22874A,stop:1 #1B6B3A); color:#FFFFFF; border:none; border-radius:8px; padding:13px 0; font-size:14px; font-weight:800; min-height:50px; }
+#PayConfirmBtn:hover    { background-color:#2ECC71; color:#071610; }
+#PayConfirmBtn:disabled { background-color:#A8C8B0; color:#FFFFFF; }
+#LicKeyInput { background-color:#F5F9F5; border:2px solid #C0D8C8; border-radius:10px;
+    padding:16px 24px; font-size:22px; font-weight:800; color:#071610;
+    letter-spacing:5px; min-height:60px; }
+#LicKeyInput:focus { border-color:#1B8040; background-color:#FFFFFF; }
+#ProcessingLabel { color:#1B8040; font-size:13px; font-weight:700; }
+#FmtBtn { background-color:#FFFFFF; color:#1A4D2E; border:1px solid #C0D8C8; border-radius:5px; padding:4px 10px; font-size:11px; font-weight:600; min-height:28px; min-width:48px; }
+#FmtBtn:hover   { background-color:#1B6B3A; color:#FFFFFF; border-color:#1B6B3A; }
+#FmtBtn:pressed { background-color:#145C30; }
