@@ -1,22 +1,21 @@
 """
-DocuFlow Enterprise v3
+DocuFlow v4 — Free Edition
 ─────────────────────────────────────────────────
-• Ribbon toolbar (tabs: Home / Format / Insert / Tools)
-• Grouped tools by function with clear visual separators
-• Login + 7-day free trial on registration
-• 3-month paid licence at $20 via Campay (MTN/Orange MoMo)
-• Payment API polls for confirmation → auto-generates + delivers key
-• Licence key auto-fills and activates itself on delivery
-• Expiry warning banner 7 days before deadline
-• Expired licences deleted from DB; trial can only be used once
+• Completely free — no licences, no payments, no limits
+• Ribbon toolbar (tabs: Home / Format / Tools)
+• Dark-mode toggle (persists per session)
+• Word-count goal with live progress bar
+• Auto-save every 60 s to the active session backup
+• User profile dialog (change email / password)
+• Clear Activity Log button
 • All styles embedded → PyInstaller builds keep full theme
 """
 
-import sys, os, datetime, smtplib, threading, secrets, time, json, urllib.request
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import sys, os, datetime, threading, time
 
-from email.mime.text   import MIMEText
-from email.mime.multipart import MIMEMultipart
+_ROOT = os.path.join(os.path.dirname(__file__), "..")
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -44,22 +43,6 @@ from core.docx_io import (
     write_docx_optimised, optimise_existing_docx,
 )
 
-# ── Configuration (fill these in) ────────────────────────────────────────────
-OWNER_EMAIL     = "ndjodongouhs@gmail.com"     # ← your Gmail
-OWNER_APP_PASS  = "umja ibgf hsgy oejq"      # ← 16-char Gmail App Password
-NOTIFY_EMAIL    = "ndjodongouhs@gmail.com"     # ← where to receive alerts
-
-# Campay API — https://campay.net (free, MTN + Orange Cameroon)
-# Register at campay.net, create an app, get these from the dashboard
-CAMPAY_APP_USER = "5YqizfRvH1HIj7m1Onk8X-CkKQ8NOT-yz5I8Lzbj_FcMist3u3u-Ff_51qMtIttj-12H5B4CSn7AwmYwCIUJjA"     # ← Campay API username
-CAMPAY_APP_PASS = "x7Fq3KSwljEU70HMyiqfahGIOM89IExG9wAHHmJV53UYF_3g94oz26b2RxTNeEulTj3qNtSF4y1Z8BP3wxI_sg"     # ← Campay API password
-CAMPAY_BASE_URL = "https://demo.campay.net/api"   # use https://campay.net/api for production
-
-LICENCE_MONTHS  = 3
-PRICE_USD       = 20
-XAF_PER_USD     = 625    # 1 USD ≈ 620 XAF  (update periodically)
-PRICE_XAF       = PRICE_USD * XAF_PER_USD
-
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 COMPACT_WIDTH    = 920
 
@@ -68,126 +51,6 @@ FONT_FAMILIES = [
     "Courier New", "Verdana", "Trebuchet MS",
 ]
 DEFAULT_FONT_SIZE = 11
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  EMAIL HELPER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _send_email(subject: str, body: str, to: str = None):
-    def _go():
-        try:
-            msg = MIMEMultipart()
-            msg["From"]    = OWNER_EMAIL
-            msg["To"]      = to or NOTIFY_EMAIL
-            msg["Subject"] = f"[DocuFlow] {subject}"
-            msg.attach(MIMEText(body, "plain"))
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
-                s.login(OWNER_EMAIL, OWNER_APP_PASS)
-                s.send_message(msg)
-        except Exception:
-            pass
-    threading.Thread(target=_go, daemon=True).start()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  CAMPAY API HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _campay_token() -> str:
-    """Get a Campay access token."""
-    url  = f"{CAMPAY_BASE_URL}/token/"
-    data = json.dumps({"username": CAMPAY_APP_USER, "password": CAMPAY_APP_PASS}).encode()
-    req  = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())["token"]
-    except Exception:
-        return ""
-
-def _campay_collect(phone: str, amount: int, ref: str) -> dict:
-    """
-    Initiate a mobile money collection.
-    phone  : 237XXXXXXXXX  (with country code, no +)
-    amount : integer in XAF
-    ref    : unique external reference
-    Returns {"reference": "...", "ussd_code": "...", "operator": "..."}
-    or {"error": "..."}
-    """
-    token = _campay_token()
-    if not token:
-        return {"error": "Could not authenticate with payment provider."}
-    url  = f"{CAMPAY_BASE_URL}/collect/"
-    body = json.dumps({
-        "amount":              amount,
-        "currency":            "XAF",
-        "from":                phone,
-        "description":         f"DocuFlow Enterprise 3-month licence",
-        "external_reference":  ref,
-    }).encode()
-    req = urllib.request.Request(url, data=body, headers={
-        "Content-Type":  "application/json",
-        "Authorization": f"Token {token}",
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        try:
-            error_data = json.loads(e.read())
-            return {"error": error_data.get("message") or error_data.get("detail") or str(e)}
-        except Exception:
-            return {"error": f"Payment server error: {e.code} {e.reason}"}
-    except Exception as e:
-        return {"error": str(e)}
-
-def _campay_status(reference: str) -> str:
-    """Poll a transaction. Returns 'SUCCESSFUL', 'FAILED', or 'PENDING'."""
-    token = _campay_token()
-    if not token: return "PENDING"
-    url = f"{CAMPAY_BASE_URL}/transaction/{reference}/"
-    req = urllib.request.Request(url, headers={"Authorization": f"Token {token}"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-            return data.get("status", "PENDING").upper()
-    except Exception:
-        return "PENDING"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAYMENT WORKER THREAD  — polls Campay and auto-activates on success
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class PaymentPoller(QThread):
-    succeeded  = pyqtSignal(str, str)   # (licence_key, until_date)
-    failed     = pyqtSignal(str)        # (error_message)
-
-    def __init__(self, campay_ref: str, payment_id: int):
-        super().__init__()
-        self._ref        = campay_ref
-        self._payment_id = payment_id
-
-    def run(self):
-        for _ in range(60):      # poll every 5 s for up to 5 min
-            time.sleep(5)
-            status = _campay_status(self._ref)
-            if status == "SUCCESSFUL":
-                result = db.confirm_payment(self._payment_id)
-                if result["ok"]:
-                    # Email the key to the owner too
-                    _send_email(
-                        f"Payment confirmed — {result['user_id']}",
-                        f"Key: {result['key']}\nValid until: {result['until']}"
-                    )
-                    self.succeeded.emit(result["key"], result["until"])
-                else:
-                    self.failed.emit("Payment confirmed but key generation failed.")
-                return
-            elif status == "FAILED":
-                self.failed.emit("Payment was declined by the network. Please try again.")
-                return
-        self.failed.emit("Payment timed out. If money was deducted, contact support.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -210,15 +73,6 @@ def make_label(text, obj=""):
     l = QLabel(text)
     if obj: l.setObjectName(obj)
     return l
-
-def status_label_style(kind: str) -> str:
-    colors = {
-        "active":  "#D4F8D2",
-        "trial":   "#FFF3A8",
-        "expired": "#F8D6D6",
-    }
-    return f"color: #000000; background-color: {colors.get(kind, '#FFFFFF')}; border-radius: 8px; padding: 10px;"
-
 
 def ribbon_btn(icon, label, tooltip="", checkable=False, primary=False):
     b = QPushButton(f"{icon}\n{label}")
@@ -264,7 +118,7 @@ class AuthPage(QWidget):
         bl.addStretch(2)
         bl.addWidget(make_label("DocuFlow",   "AuthLogo"))
         bl.addSpacing(4)
-        bl.addWidget(make_label("ENTERPRISE", "AuthLogoTag"))
+        bl.addWidget(make_label("FREE EDITION", "AuthLogoTag"))
         bl.addSpacing(32)
         bl.addWidget(make_label(
             "The word-processing automation\nplatform built for professionals.",
@@ -274,10 +128,10 @@ class AuthPage(QWidget):
         for feat in ["✦  Rich-text editing & formatting",
                      "✦  Sessions, backups & activity log",
                      "✦  Import/export .docx up to 500 MB",
-                     "✦  7-day free trial, then $20 / 3 months"]:
+                     "✦  Completely free — no limits, ever"]:
             lbl = make_label(feat, "AuthFeature"); bl.addWidget(lbl); bl.addSpacing(8)
         bl.addStretch(3)
-        bl.addWidget(make_label("v3.0  ·  © 2025 DocuFlow Enterprise", "AuthFooter"))
+        bl.addWidget(make_label("v4.0  ·  © 2025 DocuFlow Free Edition", "AuthFooter"))
         root.addWidget(brand)
 
         # ── Right form panel ─────────────────────────────────────────────────
@@ -302,18 +156,11 @@ class AuthPage(QWidget):
         fl.addWidget(self._pass); fl.addSpacing(8)
 
         # Email (hidden in login mode)
-        self._email_lbl = make_label("EMAIL (optional — for licence delivery)", "AuthFieldLabel")
+        self._email_lbl = make_label("EMAIL (optional)", "AuthFieldLabel")
         self._email_lbl.hide(); fl.addWidget(self._email_lbl); fl.addSpacing(6)
         self._email_in = QLineEdit(); self._email_in.setObjectName("AuthInput")
         self._email_in.setPlaceholderText("you@example.com"); self._email_in.hide()
         fl.addWidget(self._email_in); fl.addSpacing(16)
-
-        self._trial_note = make_label(
-            "🎁  New accounts get a free 7-day trial — no payment required.",
-            "AuthSuccess"
-        )
-        self._trial_note.hide(); self._trial_note.setWordWrap(True)
-        fl.addWidget(self._trial_note); fl.addSpacing(16)
 
         self._action_btn = QPushButton("Sign In")
         self._action_btn.setObjectName("AuthBtn")
@@ -335,17 +182,17 @@ class AuthPage(QWidget):
         if self._mode == "login":
             self._mode = "register"
             self._title.setText("Create account")
-            self._sub.setText("Start your 7-day free trial today.")
+            self._sub.setText("Create your free account.")
             self._action_btn.setText("Create Account")
             self._toggle_btn.setText("Already have an account? Sign in →")
-            self._email_lbl.show(); self._email_in.show(); self._trial_note.show()
+            self._email_lbl.show(); self._email_in.show()
         else:
             self._mode = "login"
             self._title.setText("Sign in")
             self._sub.setText("Welcome back. Enter your credentials.")
             self._action_btn.setText("Sign In")
             self._toggle_btn.setText("Don't have an account? Create one →")
-            self._email_lbl.hide(); self._email_in.hide(); self._trial_note.hide()
+            self._email_lbl.hide(); self._email_in.hide()
         self._error.setText(""); self._user.clear(); self._pass.clear()
 
     def _do_action(self):
@@ -371,368 +218,126 @@ class AuthPage(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  PAYMENT DIALOG  — Campay MoMo integration
+#  PROFILE DIALOG  — change email / password
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class PaymentDialog(QDialog):
-    licence_activated = pyqtSignal(str, str)   # (key, until)
-
+class ProfileDialog(QDialog):
     def __init__(self, user: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("DocuFlow Enterprise — Purchase Licence")
-        self.setMinimumWidth(540); self.setMinimumHeight(700)
-        self._user    = user
-        self._poller  = None
-        self._pay_id  = None
+        self.setWindowTitle("DocuFlow — Profile Settings")
+        self.setMinimumWidth(420)
+        self._user = user
 
         root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
-        # Header
-        hdr = QWidget(); hdr.setObjectName("PayHdr"); hdr.setFixedHeight(70)
+        hdr = QWidget(); hdr.setObjectName("PayHdr"); hdr.setFixedHeight(64)
         hl  = QHBoxLayout(hdr); hl.setContentsMargins(28,0,28,0)
-        hl.addWidget(make_label("DocuFlow", "PayLogo"))
+        hl.addWidget(make_label("DocuFlow",       "PayLogo"))
         hl.addSpacing(8)
-        hl.addWidget(make_label("Enterprise Licence", "PayLogoSub"))
+        hl.addWidget(make_label("Profile Settings", "PayLogoSub"))
         hl.addStretch()
-        hl.addWidget(make_label(f"${PRICE_USD} / 3 months", "PayPrice"))
         root.addWidget(hdr)
 
         body = QWidget(); body.setObjectName("PayBody")
-        bl   = QVBoxLayout(body); bl.setContentsMargins(28,16,28,12); bl.setSpacing(8)
+        bl   = QVBoxLayout(body); bl.setContentsMargins(32,20,32,20); bl.setSpacing(12)
 
-        bl.addWidget(make_label(
-            f"${PRICE_USD}/3mo  ≈  {PRICE_XAF:,} FCFA · MTN/Orange Money · Auto-delivered",
-            "PayDesc"
-        ))
+        bl.addWidget(make_label(f"Logged in as:  {user['username']}", "PayDesc"))
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine); bl.addWidget(sep)
 
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color:#C0D8C8;"); bl.addWidget(sep)
+        # Email
+        bl.addWidget(make_label("EMAIL", "AuthFieldLabel"))
+        self._email = QLineEdit(); self._email.setObjectName("AuthInput")
+        self._email.setText(user.get("email", ""))
+        self._email.setPlaceholderText("you@example.com")
+        bl.addWidget(self._email)
 
-        # Method selection
-        bl.addWidget(make_label("PAYMENT METHOD", "PaySectionLabel"))
-        meth_row = QHBoxLayout(); meth_row.setSpacing(10)
-        self._mtn_btn = QPushButton("📱  MTN MoMo")
-        self._mtn_btn.setCheckable(True)
-        self._mtn_btn.setStyleSheet(
-            "QPushButton{background:#FFC000;color:#000;border:none;border-radius:8px;"
-            "padding:12px 20px;font-size:13px;font-weight:700;}"
-            "QPushButton:checked{background:#D4A000;border:2px solid #000;}"
-        )
-        self._ora_btn = QPushButton("📱  Orange Money")
-        self._ora_btn.setCheckable(True)
-        self._ora_btn.setStyleSheet(
-            "QPushButton{background:#FF6600;color:#FFF;border:none;border-radius:8px;"
-            "padding:12px 20px;font-size:13px;font-weight:700;}"
-            "QPushButton:checked{background:#CC5200;border:2px solid #FFF;}"
-        )
-        self._mtn_btn.clicked.connect(lambda: self._select_method("mtn"))
-        self._ora_btn.clicked.connect(lambda: self._select_method("orange"))
-        meth_row.addWidget(self._mtn_btn); meth_row.addWidget(self._ora_btn)
-        meth_row.addStretch(); bl.addLayout(meth_row)
+        save_email = QPushButton("Update Email")
+        save_email.setObjectName("PayConfirmBtn")
+        save_email.clicked.connect(self._save_email)
+        bl.addWidget(save_email)
 
-        # Phone number input
-        bl.addWidget(make_label("MOBILE NUMBER (with country code, e.g. 237XXXXXXXXX)", "PaySectionLabel"))
-        self._phone_in = QLineEdit(); self._phone_in.setObjectName("AuthInput")
-        self._phone_in.setPlaceholderText("237XXXXXXXXX")
-        bl.addWidget(self._phone_in)
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine); bl.addWidget(sep2)
 
-        # Instructions
-        self._instructions = make_label("", "PayInstructions")
-        self._instructions.setWordWrap(True); self._instructions.setMinimumHeight(220)
-        self._instructions.setText(
-            "Select MTN MoMo or Orange Money above.\n"
-            "Enter your mobile number with country code (e.g. 237XXXXXXXXX).\n"
-            "Click Pay to initiate the transaction.\n"
-            "Approve the USSD prompt with your PIN.\n"
-            "Your licence key will be delivered instantly upon payment confirmation."
-        )
-        bl.addWidget(self._instructions)
+        # Password
+        bl.addWidget(make_label("NEW PASSWORD", "AuthFieldLabel"))
+        self._pw1 = QLineEdit(); self._pw1.setObjectName("AuthInput")
+        self._pw1.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw1.setPlaceholderText("New password (min 6 chars)")
+        bl.addWidget(self._pw1)
 
-        # Pay button
-        self._pay_btn = QPushButton(f"  Pay {PRICE_XAF:,} FCFA  →  Get Licence Instantly")
-        self._pay_btn.setObjectName("PayConfirmBtn")
-        self._pay_btn.clicked.connect(self._initiate_payment)
-        self._pay_btn.setEnabled(False)
-        bl.addWidget(self._pay_btn)
+        bl.addWidget(make_label("CONFIRM PASSWORD", "AuthFieldLabel"))
+        self._pw2 = QLineEdit(); self._pw2.setObjectName("AuthInput")
+        self._pw2.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw2.setPlaceholderText("Repeat new password")
+        bl.addWidget(self._pw2)
 
-        # Progress / status
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 0); self._progress.hide()
-        bl.addWidget(self._progress)
+        save_pw = QPushButton("Change Password")
+        save_pw.setObjectName("PayConfirmBtn")
+        save_pw.clicked.connect(self._save_password)
+        bl.addWidget(save_pw)
 
-        self._status_lbl = make_label("", "PayStatus")
-        self._status_lbl.setWordWrap(True); bl.addWidget(self._status_lbl)
+        self._msg = make_label("", "AuthError")
+        self._msg.setWordWrap(True)
+        bl.addWidget(self._msg)
 
         bl.addStretch()
         root.addWidget(body, stretch=1)
 
         ftr = QWidget(); ftr.setObjectName("PayFooter")
         fl  = QHBoxLayout(ftr); fl.setContentsMargins(28,10,28,10)
-        fl.addWidget(make_label(
-            "Secure payment via Campay · No card needed · Funds never stored by DocuFlow",
-            "PayFooterNote"
-        ))
-        fl.addStretch()
-        self._close_btn = ghost_btn("Close"); self._close_btn.clicked.connect(self.accept)
-        fl.addWidget(self._close_btn)
-        root.addWidget(ftr)
-
-        self._method = None
-
-    def _select_method(self, m):
-        self._method = m
-        if m == "mtn":
-            self._ora_btn.setChecked(False)
-            self._instructions.setText(
-                f"You will receive a USSD prompt on {self._phone_in.text() or 'your MTN number'}.\n"
-                f"Enter your MTN MoMo PIN to approve {PRICE_XAF:,} FCFA.\n"
-                "The licence key is delivered the moment payment clears."
-            )
-        else:
-            self._mtn_btn.setChecked(False)
-            self._instructions.setText(
-                f"You will receive a USSD prompt on {self._phone_in.text() or 'your Orange number'}.\n"
-                f"Enter your Orange Money PIN to approve {PRICE_XAF:,} FCFA.\n"
-                "The licence key is delivered the moment payment clears."
-            )
-        self._pay_btn.setEnabled(True)
-
-    def _initiate_payment(self):
-        phone = self._phone_in.text().strip().replace("+", "").replace(" ", "")
-        if not phone or len(phone) < 12:
-            self._status_lbl.setText("✖  Please enter a valid phone number (12+ digits with country code)."); return
-        if not self._method:
-            self._status_lbl.setText("✖  Please select a payment method."); return
-
-        self._pay_btn.setEnabled(False)
-        self._progress.show()
-        self._status_lbl.setText("⏳  Initiating payment request…")
-
-        # Create payment record in DB
-        ext_ref = f"DF-{self._user['id']}-{secrets.token_hex(4).upper()}"
-        pay_id  = db.create_payment(
-            self._user["id"], self._method, phone,
-            amount_usd=PRICE_USD, currency="XAF"
-        )
-        self._pay_id = pay_id
-
-        def _do_collect():
-            result = _campay_collect(phone, PRICE_XAF, ext_ref)
-            if "error" in result:
-                self._on_error(result["error"])
-                return
-            db.update_payment_txref(pay_id, result.get("reference", ""))
-            # Notify owner
-            _send_email(
-                f"Payment initiated — {self._user['username']} via {self._method.upper()}",
-                f"Phone: {phone}\nRef: {ext_ref}\nAmount: {PRICE_XAF} XAF\nCampay ref: {result.get('reference','')}"
-            )
-            # Start polling thread
-            self._poller = PaymentPoller(result.get("reference", ext_ref), pay_id)
-            self._poller.succeeded.connect(self._on_success)
-            self._poller.failed.connect(self._on_error)
-            self._poller.start()
-            # Update UI on main thread
-            QTimer.singleShot(0, lambda: self._status_lbl.setText(
-                "✔  Payment request sent! Approve the prompt on your phone.\n"
-                "Waiting for confirmation — this may take up to 2 minutes…"
-            ))
-
-        threading.Thread(target=_do_collect, daemon=True).start()
-
-    @pyqtSlot(str, str)
-    def _on_success(self, key: str, until: str):
-        self._progress.hide()
-        self._status_lbl.setObjectName("LicenceActive")
-        self._status_lbl.setText(
-            f"✔  Payment confirmed!\n"
-            f"Your licence key:  {key}\n"
-            f"Valid until: {until}\n\n"
-            "Activating your licence now…"
-        )
-        self._status_lbl.style().unpolish(self._status_lbl)
-        self._status_lbl.style().polish(self._status_lbl)
-        # Email key to user if they have an email
-        user = db.get_user(self._user["id"])
-        if user and user.get("email"):
-            _send_email(
-                "Your DocuFlow Enterprise Licence Key",
-                f"Hello {user['username']},\n\nYour licence key:\n\n    {key}\n\nValid until: {until}\n\n"
-                f"It has already been activated in the app.\n\nThank you!",
-                to=user["email"]
-            )
-        QTimer.singleShot(1500, lambda: (self.licence_activated.emit(key, until), self.accept()))
-
-    @pyqtSlot(str)
-    def _on_error(self, msg: str):
-        self._progress.hide()
-        self._pay_btn.setEnabled(True)
-        self._status_lbl.setObjectName("AuthError")
-        self._status_lbl.setText(f"✖  {msg}")
-        self._status_lbl.style().unpolish(self._status_lbl)
-        self._status_lbl.style().polish(self._status_lbl)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  LICENCE DIALOG  — Microsoft-style activation
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class LicenceDialog(QDialog):
-    activated = pyqtSignal()
-
-    def __init__(self, user: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("DocuFlow Enterprise — Activate")
-        self.setMinimumWidth(520); self._user = user
-
-        root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
-
-        hdr = QWidget(); hdr.setObjectName("PayHdr"); hdr.setFixedHeight(72)
-        hl  = QHBoxLayout(hdr); hl.setContentsMargins(28,0,28,0)
-        hl.addWidget(make_label("DocuFlow",           "PayLogo"))
-        hl.addSpacing(8)
-        hl.addWidget(make_label("Product Activation", "PayLogoSub"))
-        hl.addStretch()
-        root.addWidget(hdr)
-
-        body = QWidget(); body.setObjectName("PayBody")
-        bl   = QVBoxLayout(body); bl.setContentsMargins(32,24,32,20); bl.setSpacing(14)
-
-        # Status
-        days = db.licence_days_remaining(user["id"])
-        lic  = db.get_active_licence(user["id"])
-        if lic:
-            kind       = lic.get("kind", "paid")
-            until      = datetime.datetime.strptime(lic["valid_until"], "%Y-%m-%d %H:%M:%S")
-            if kind == "trial":
-                st          = f"🎁  Free trial active — {days} day(s) remaining  (expires {until.strftime('%d %b %Y')})"
-                st_obj      = "LicenceTrial"
-                status_kind = "trial"
-            else:
-                st          = f"✔  Licence active — expires {until.strftime('%d %b %Y')}  ({days} days remaining)"
-                st_obj      = "LicenceActive"
-                status_kind = "active"
-        else:
-            st          = "✖  No active licence — application is in read-only mode."
-            st_obj      = "LicenceExpired"
-            status_kind = "expired"
-        lbl = make_label(st, st_obj)
-        lbl.setWordWrap(True)
-        lbl.setStyleSheet(status_label_style(status_kind))
-        bl.addWidget(lbl)
-
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color:#C0D8C8;"); bl.addWidget(sep)
-
-        bl.addWidget(make_label(
-            "Enter your 16-character product key:", "PayDesc"
-        ))
-
-        self._key_in = QLineEdit(); self._key_in.setObjectName("LicKeyInput")
-        self._key_in.setPlaceholderText("XXXX - XXXX - XXXX - XXXX")
-        self._key_in.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._key_in.returnPressed.connect(self._activate)
-        bl.addWidget(self._key_in)
-
-        act_btn = QPushButton("Activate  →")
-        act_btn.setObjectName("PayConfirmBtn"); act_btn.clicked.connect(self._activate)
-        bl.addWidget(act_btn)
-
-        self._msg = make_label("", "AuthError"); self._msg.setWordWrap(True)
-        self._msg.setAlignment(Qt.AlignmentFlag.AlignCenter); bl.addWidget(self._msg)
-
-        get_key = QPushButton("Don't have a key?  →  Purchase a 3-month licence ($20)")
-        get_key.setObjectName("AuthToggle"); get_key.setFlat(True)
-        get_key.clicked.connect(self._open_payment)
-        bl.addWidget(get_key, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        bl.addStretch(); root.addWidget(body, stretch=1)
-
-        ftr = QWidget(); ftr.setObjectName("PayFooter")
-        fl  = QHBoxLayout(ftr); fl.setContentsMargins(28,10,28,10)
-        fl.addWidget(make_label(
-            f"3-month licence: ${PRICE_USD}  ·  MTN MoMo & Orange Money  ·  Auto-delivered",
-            "PayFooterNote"
-        ))
         fl.addStretch()
         close = ghost_btn("Close"); close.clicked.connect(self.accept)
         fl.addWidget(close)
         root.addWidget(ftr)
 
-    def _activate(self):
-        key = self._key_in.text().strip().upper().replace(" ", "")
-        clean = key.replace("-", "")
-        if len(clean) == 16:
-            key = "-".join(clean[i:i+4] for i in range(0, 16, 4))
-        if not key:
-            self._msg.setText("Please enter a product key."); return
-        result = db.activate_licence(self._user["id"], key)
-        if result["ok"]:
-            self._msg.setObjectName("LicenceActive")
-            self._msg.setText(f"✔  Activated! Valid until {result['until']}.")
-            self._msg.style().unpolish(self._msg); self._msg.style().polish(self._msg)
-            QTimer.singleShot(800, lambda: (self.activated.emit(), self.accept()))
-        else:
+    def _save_email(self):
+        email = self._email.text().strip()
+        db.update_user_email(self._user["id"], email)
+        self._user["email"] = email
+        self._msg.setObjectName("AuthSuccess")
+        self._msg.setText("✔  Email updated.")
+        self._msg.style().unpolish(self._msg); self._msg.style().polish(self._msg)
+
+    def _save_password(self):
+        p1 = self._pw1.text(); p2 = self._pw2.text()
+        if len(p1) < 6:
             self._msg.setObjectName("AuthError")
-            self._msg.setText(f"✖  {result['reason']}")
-            self._msg.style().unpolish(self._msg); self._msg.style().polish(self._msg)
-
-    def _open_payment(self):
-        dlg = PaymentDialog(self._user, self)
-        dlg.licence_activated.connect(self._on_paid)
-        dlg.exec()
-
-    def _on_paid(self, key: str, until: str):
-        # Auto-fill and activate
-        self._key_in.setText(key)
-        self._activate()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  LICENCE BANNER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class LicenceBanner(QWidget):
-    clicked = pyqtSignal()
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedHeight(34); self.setCursor(Qt.CursorShape.PointingHandCursor)
-        lay = QHBoxLayout(self); lay.setContentsMargins(24,0,24,0)
-        self._lbl = make_label("", "BannerLabel")
-        self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addStretch(); lay.addWidget(self._lbl); lay.addStretch()
-        # Click hint arrow
-        self._arrow = make_label("›", "BannerLabel")
-        self._arrow.setStyleSheet("color: #000000; font-size: 16px; font-weight: 900;")
-        lay.addWidget(self._arrow)
-
-    def update_status(self, user_id: int):
-        days = db.licence_days_remaining(user_id)
-        lic  = db.get_active_licence(user_id)
-        if lic:
-            kind = lic.get("kind", "paid")
-            if kind == "trial":
-                self.setObjectName("LicenceBannerTrial")
-                self._lbl.setText(f"🎁  Free Trial — {days} day(s) remaining  ·  Click to purchase a full licence")
-                status_kind = "trial"
-            elif days > 7:
-                self.setObjectName("LicenceBannerOk")
-                self._lbl.setText(f"✔  Licence valid — {days} days remaining  ·  Click to manage")
-                status_kind = "active"
-            else:
-                self.setObjectName("LicenceBannerWarn")
-                self._lbl.setText(f"⚠  Licence expires in {days} day(s) — click to renew now")
-                status_kind = "active"
+            self._msg.setText("✖  Password must be at least 6 characters.")
+        elif p1 != p2:
+            self._msg.setObjectName("AuthError")
+            self._msg.setText("✖  Passwords do not match.")
         else:
-            self.setObjectName("LicenceBannerExpired")
-            self._lbl.setText("✖  Licence expired — READ-ONLY MODE — click to activate")
-            status_kind = "expired"
-        self._lbl.setStyleSheet(status_label_style(status_kind))
-        self.style().unpolish(self); self.style().polish(self)
-        self._lbl.style().unpolish(self._lbl); self._lbl.style().polish(self._lbl)
+            db.change_password(self._user["id"], p1)
+            self._msg.setObjectName("AuthSuccess")
+            self._msg.setText("✔  Password changed.")
+            self._pw1.clear(); self._pw2.clear()
+        self._msg.style().unpolish(self._msg); self._msg.style().polish(self._msg)
 
-    def mousePressEvent(self, _): self.clicked.emit()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  WORD GOAL DIALOG
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class WordGoalDialog(QDialog):
+    goal_set = pyqtSignal(int)
+
+    def __init__(self, current_goal: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Set Word-Count Goal")
+        self.setMinimumWidth(340)
+        lay = QVBoxLayout(self); lay.setSpacing(12); lay.setContentsMargins(24,20,24,20)
+        lay.addWidget(make_label("Target word count (0 = disable):", "PayDesc"))
+        self._spin = QSpinBox()
+        self._spin.setRange(0, 999999)
+        self._spin.setValue(current_goal)
+        self._spin.setSingleStep(100)
+        lay.addWidget(self._spin)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self._ok); bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _ok(self):
+        self.goal_set.emit(self._spin.value()); self.accept()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -755,8 +360,8 @@ class Sidebar(QWidget):
 
         self._logo_wrap = QWidget(); self._logo_wrap.setObjectName("logo_wrap")
         lw = QVBoxLayout(self._logo_wrap); lw.setContentsMargins(20,26,20,22); lw.setSpacing(3)
-        self._logo_name = make_label("DocuFlow",   "logo_name")
-        self._logo_tag  = make_label("ENTERPRISE", "logo_tag")
+        self._logo_name = make_label("DocuFlow",    "logo_name")
+        self._logo_tag  = make_label("FREE EDITION", "logo_tag")
         lw.addWidget(self._logo_name); lw.addWidget(self._logo_tag)
         lay.addWidget(self._logo_wrap)
 
@@ -772,7 +377,7 @@ class Sidebar(QWidget):
         lay.addStretch()
         self._logout_btn = ghost_btn("⎋  Sign Out"); self._logout_btn.setObjectName("SidebarLogout")
         lay.addWidget(self._logout_btn)
-        self._footer = make_label("v3.0  ·  © 2025", "sidebar_footer"); lay.addWidget(self._footer)
+        self._footer = make_label("v4.0  ·  © 2025", "sidebar_footer"); lay.addWidget(self._footer)
         self._activate("editor")
 
     def _activate(self, key):
@@ -795,7 +400,7 @@ class Sidebar(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HEADER
+#  HEADER  (no licence banner — just title row)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Header(QWidget):
@@ -803,7 +408,6 @@ class Header(QWidget):
         super().__init__()
         self.setObjectName("Header")
         lay = QVBoxLayout(self); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
-        self.banner = LicenceBanner(); lay.addWidget(self.banner)
         title_row = QWidget(); title_row.setObjectName("HeaderTitleRow")
         title_row.setFixedHeight(52)
         tr = QHBoxLayout(title_row); tr.setContentsMargins(28,0,28,0)
@@ -821,11 +425,6 @@ class Header(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Ribbon(QWidget):
-    """
-    Office-style ribbon with tab bar on top and grouped buttons below.
-    Groups are separated by visible vertical lines + group labels underneath.
-    """
-    # signals for all actions
     format_acted = pyqtSignal(str)
     import_docx  = pyqtSignal()
     import_file  = pyqtSignal()
@@ -833,13 +432,14 @@ class Ribbon(QWidget):
     export_opt   = pyqtSignal()
     new_session  = pyqtSignal()
     save_backup  = pyqtSignal()
+    toggle_dark  = pyqtSignal()
+    set_goal     = pyqtSignal()
 
-    # rich-text signals (forwarded from RichBar)
-    bold_toggled    = pyqtSignal(bool)
-    italic_toggled  = pyqtSignal(bool)
-    under_toggled   = pyqtSignal(bool)
-    font_changed    = pyqtSignal(str)
-    size_changed    = pyqtSignal(int)
+    bold_toggled   = pyqtSignal(bool)
+    italic_toggled = pyqtSignal(bool)
+    under_toggled  = pyqtSignal(bool)
+    font_changed   = pyqtSignal(str)
+    size_changed   = pyqtSignal(int)
 
     TABS = ["Home", "Format", "Tools"]
 
@@ -851,9 +451,8 @@ class Ribbon(QWidget):
 
         root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
-        # Tab bar
         tab_bar = QWidget(); tab_bar.setObjectName("RibbonTabBar")
-        tb = QHBoxLayout(tab_bar); tb.setContentsMargins(24,0,0,0); tb.setSpacing(0); tb.setContentsMargins(0,0,0,0)
+        tb = QHBoxLayout(tab_bar); tb.setContentsMargins(0,0,0,0); tb.setSpacing(0)
         self._tab_btns = []
         for i, name in enumerate(self.TABS):
             b = QPushButton(name); b.setObjectName("RibbonTab")
@@ -863,7 +462,6 @@ class Ribbon(QWidget):
         tb.addStretch()
         root.addWidget(tab_bar)
 
-        # Panel stack
         self._panel_stack = QStackedWidget()
         self._panel_stack.setFixedHeight(90)
         self._panel_stack.addWidget(self._build_home())
@@ -872,8 +470,6 @@ class Ribbon(QWidget):
         root.addWidget(self._panel_stack)
 
         self._switch_tab(0)
-
-        # Sync bold/italic/underline button state with cursor
         editor.cursorPositionChanged.connect(self._sync_char_fmt)
         editor.currentCharFormatChanged.connect(self._on_char_fmt)
 
@@ -888,10 +484,9 @@ class Ribbon(QWidget):
         w = QWidget(); w.setObjectName("RibbonPanel"); return w
 
     def _group(self, label: str, parent_lay: QHBoxLayout, last=False) -> QHBoxLayout:
-        """Add a named group with a visible right-border separator. Returns inner button layout."""
         wrap = QWidget()
         wrap.setObjectName("RibbonGroupLast" if last else "RibbonGroup")
-        inner = QVBoxLayout(wrap); inner.setContentsMargins(8, 4, 8, 6); inner.setSpacing(2)
+        inner = QVBoxLayout(wrap); inner.setContentsMargins(8,4,8,6); inner.setSpacing(2)
         btn_row = QHBoxLayout(); btn_row.setSpacing(4)
         inner.addLayout(btn_row, stretch=0)
         lbl = make_label(label, "RibbonGroupLabel")
@@ -905,67 +500,66 @@ class Ribbon(QWidget):
             parent_lay.addWidget(sep)
         return btn_row
 
-    # ── Home tab: File I/O + Session + Backup ────────────────────────────────
+    # ── Home tab ─────────────────────────────────────────────────────────────
     def _build_home(self) -> QWidget:
         p = self._panel(); lay = QHBoxLayout(p); lay.setContentsMargins(16,0,16,0); lay.setSpacing(0)
 
         g = self._group("FILE", lay)
         b = ribbon_btn("⬆", "Import .docx", "Import a Word document", primary=False)
         b.clicked.connect(self.import_docx); g.addWidget(b)
-        b = ribbon_btn("⬆", "Import File",  "Import text/HTML/CSV… up to 500 MB")
+        b = ribbon_btn("⬆", "Import File", "Import text/HTML/CSV… up to 500 MB")
         b.clicked.connect(self.import_file); g.addWidget(b)
 
         g = self._group("EXPORT", lay)
-        b = ribbon_btn("⬇", "Export .docx",  "Save as Word document", primary=True)
+        b = ribbon_btn("⬇", "Export .docx", "Save as Word document", primary=True)
         b.clicked.connect(self.export_docx); g.addWidget(b)
-        b = ribbon_btn("⬇", "Optimised",     "Export compressed (images reduced, same .docx format)")
+        b = ribbon_btn("⬇", "Optimised", "Export compressed (images reduced)")
         b.clicked.connect(self.export_opt); g.addWidget(b)
 
         g = self._group("SESSION", lay)
         b = ribbon_btn("＋", "New Session", "Create a new workspace session")
         b.clicked.connect(self.new_session); g.addWidget(b)
 
-        g = self._group("BACKUP", lay, last=True)
+        g = self._group("BACKUP", lay)
         b = ribbon_btn("🗄", "Save Backup", "Save a snapshot of the current text")
         b.clicked.connect(self.save_backup); g.addWidget(b)
+
+        g = self._group("VIEW", lay, last=True)
+        b = ribbon_btn("🌙", "Dark Mode", "Toggle dark / light theme")
+        b.clicked.connect(self.toggle_dark); g.addWidget(b)
+        b = ribbon_btn("🎯", "Word Goal", "Set a word-count writing goal")
+        b.clicked.connect(self.set_goal); g.addWidget(b)
 
         lay.addStretch()
         return p
 
-    # ── Format tab: Text style + Align + Case ────────────────────────────────
+    # ── Format tab ───────────────────────────────────────────────────────────
     def _build_format(self) -> QWidget:
         p = self._panel(); lay = QHBoxLayout(p); lay.setContentsMargins(16,0,16,0); lay.setSpacing(0)
 
-        # Rich text
         g = self._group("TEXT STYLE", lay)
         self._bold_btn = QPushButton("B"); self._bold_btn.setObjectName("RichBtnBold")
         self._bold_btn.setCheckable(True); self._bold_btn.setFixedSize(34,34)
         self._bold_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._bold_btn.clicked.connect(lambda c: self._apply_bold(c))
-        g.addWidget(self._bold_btn)
+        self._bold_btn.clicked.connect(lambda c: self._apply_bold(c)); g.addWidget(self._bold_btn)
 
         self._ital_btn = QPushButton("I"); self._ital_btn.setObjectName("RichBtnItalic")
         self._ital_btn.setCheckable(True); self._ital_btn.setFixedSize(34,34)
         self._ital_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._ital_btn.clicked.connect(lambda c: self._apply_italic(c))
-        g.addWidget(self._ital_btn)
+        self._ital_btn.clicked.connect(lambda c: self._apply_italic(c)); g.addWidget(self._ital_btn)
 
         self._und_btn = QPushButton("U"); self._und_btn.setObjectName("RichBtnUnder")
         self._und_btn.setCheckable(True); self._und_btn.setFixedSize(34,34)
         self._und_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._und_btn.clicked.connect(lambda c: self._apply_underline(c))
-        g.addWidget(self._und_btn)
+        self._und_btn.clicked.connect(lambda c: self._apply_underline(c)); g.addWidget(self._und_btn)
 
-        # Font
         g = self._group("FONT FAMILY", lay)
         self._font_cb = QComboBox(); self._font_cb.setObjectName("FontCombo")
         self._font_cb.setMinimumWidth(150)
         for f in FONT_FAMILIES: self._font_cb.addItem(f)
         self._font_cb.setCurrentText("Calibri")
-        self._font_cb.currentTextChanged.connect(self._apply_font_family)
-        g.addWidget(self._font_cb)
+        self._font_cb.currentTextChanged.connect(self._apply_font_family); g.addWidget(self._font_cb)
 
-        # Size
         g = self._group("SIZE", lay)
         self._size_dec = QPushButton("A−"); self._size_dec.setObjectName("RibbonBtn")
         self._size_dec.setFixedSize(36,34)
@@ -978,14 +572,12 @@ class Ribbon(QWidget):
         self._size_inc.setFixedSize(36,34)
         self._size_inc.clicked.connect(lambda: self._change_size(+1)); g.addWidget(self._size_inc)
 
-        # Align
         g = self._group("ALIGNMENT", lay)
         for icon, label, key in [("⬅","Left","align_left"),("⊟","Center","align_center"),("➡","Right","align_right")]:
             b = QPushButton(icon); b.setObjectName("RibbonBtn"); b.setFixedSize(36,34)
             b.setToolTip(f"{label} align"); b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _, k=key: self.format_acted.emit(k)); g.addWidget(b)
 
-        # Case
         g = self._group("CASE", lay, last=True)
         for icon, label, key in [("AA","UPPER","to_upper"),("aa","lower","to_lower"),("Aa","Title","to_title"),("A.","Sentence","to_sentence")]:
             b = QPushButton(icon); b.setObjectName("RibbonBtn"); b.setFixedSize(36,34)
@@ -994,23 +586,27 @@ class Ribbon(QWidget):
 
         lay.addStretch(); return p
 
-    # ── Tools tab: Clean + Separator + Find ──────────────────────────────────
+    # ── Tools tab ────────────────────────────────────────────────────────────
     def _build_tools(self) -> QWidget:
         p = self._panel(); lay = QHBoxLayout(p); lay.setContentsMargins(16,0,16,0); lay.setSpacing(0)
 
         g = self._group("CLEAN", lay)
-        b = ribbon_btn("⌫","Remove\nSpaces","Collapse extra spaces and blank lines")
+        b = ribbon_btn("⌫", "Remove\nSpaces", "Collapse extra spaces and blank lines")
         b.clicked.connect(lambda: self.format_acted.emit("remove_spaces")); g.addWidget(b)
 
         g = self._group("SEPARATOR", lay)
-        b = ribbon_btn("＋","Add Sep","Insert a horizontal separator at the cursor line")
+        b = ribbon_btn("＋", "Add Sep", "Insert a horizontal separator at the cursor line")
         b.clicked.connect(lambda: self.format_acted.emit("add_separator")); g.addWidget(b)
-        b = ribbon_btn("✕","Remove\nSep","Remove all separator lines")
+        b = ribbon_btn("✕", "Remove\nSep", "Remove all separator lines")
         b.clicked.connect(lambda: self.format_acted.emit("remove_separator")); g.addWidget(b)
+
+        g = self._group("TEXT STATS", lay, last=True)
+        b = ribbon_btn("📊", "Word\nFreq", "Show most frequent words in the text")
+        b.clicked.connect(lambda: self.format_acted.emit("word_freq")); g.addWidget(b)
 
         lay.addStretch(); return p
 
-    # ── rich-text apply helpers ───────────────────────────────────────────────
+    # ── rich-text helpers ─────────────────────────────────────────────────────
     def _apply_fmt(self, fmt):
         c = self._editor.textCursor()
         if c.hasSelection(): c.mergeCharFormat(fmt)
@@ -1083,7 +679,7 @@ class FindBar(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class SessionRow(QWidget):
-    new_session = pyqtSignal()
+    new_session      = pyqtSignal()
     session_selected = pyqtSignal(int)
 
     def __init__(self):
@@ -1117,7 +713,7 @@ class SessionRow(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  STATUS BAR
+#  STATUS BAR  — shows word/char/line stats + word-goal progress
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class StatusBar(QWidget):
@@ -1125,19 +721,41 @@ class StatusBar(QWidget):
         super().__init__()
         self.setObjectName("StatusBar"); self.setFixedHeight(28)
         lay = QHBoxLayout(self); lay.setContentsMargins(24,0,24,0); lay.setSpacing(22)
-        self._w  = make_label("Words: 0", "StatLabel")
-        self._c  = make_label("Chars: 0", "StatLabel")
-        self._l  = make_label("Lines: 1", "StatLabel")
-        self._fl = make_label("",         "FlashLabel")
+        self._w  = make_label("Words: 0",  "StatLabel")
+        self._c  = make_label("Chars: 0",  "StatLabel")
+        self._l  = make_label("Lines: 1",  "StatLabel")
+        self._goal_lbl  = make_label("",   "StatLabel")
+        self._goal_bar  = QProgressBar()
+        self._goal_bar.setFixedWidth(120); self._goal_bar.setFixedHeight(14)
+        self._goal_bar.setTextVisible(False); self._goal_bar.hide()
+        self._fl = make_label("", "FlashLabel")
         for w in (self._w, self._c, self._l): lay.addWidget(w)
+        lay.addWidget(self._goal_lbl)
+        lay.addWidget(self._goal_bar)
         lay.addStretch(); lay.addWidget(self._fl)
         self._timer = QTimer(singleShot=True); self._timer.timeout.connect(lambda: self._fl.setText(""))
+        self._goal = 0
+
+    def set_goal(self, g: int):
+        self._goal = g
+        self._goal_bar.setVisible(g > 0)
+        self._goal_lbl.setVisible(g > 0)
+        if g > 0:
+            self._goal_bar.setRange(0, g)
 
     def update(self, text):
         s = stats(text)
         self._w.setText(f"Words: {s['words']}")
         self._c.setText(f"Chars: {s['chars']}")
         self._l.setText(f"Lines: {s['lines']}")
+        if self._goal > 0:
+            pct = min(100, int(s["words"] / self._goal * 100))
+            self._goal_bar.setValue(min(s["words"], self._goal))
+            self._goal_lbl.setText(f"Goal: {s['words']}/{self._goal} ({pct}%)")
+            self._goal_bar.setStyleSheet(
+                "QProgressBar::chunk { background-color: %s; border-radius: 3px; }"
+                % ("#2ECC71" if pct < 100 else "#F1C40F")
+            )
 
     def flash(self, msg, ms=3000):
         self._fl.setText(msg); self._timer.start(ms)
@@ -1162,22 +780,24 @@ class EditorPage(QWidget):
     def __init__(self, header: Header, user: dict):
         super().__init__()
         self.setObjectName("PageArea")
-        self._header = header; self._user = user
-        self._undo = []; self._active_id = None
-        self._source_path = None; self._read_only = False
+        self._header      = header
+        self._user        = user
+        self._undo        = []
+        self._active_id   = None
+        self._source_path = None
+        self._word_goal   = 0
+        self._dark_mode   = False
 
         lay = QVBoxLayout(self); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
 
-        # Editor widget first (needed by Ribbon)
         self.editor = QTextEdit(); self.editor.setObjectName("Editor")
         self.editor.setPlaceholderText(
             "Start typing, paste text, or import a file from the Home tab above.\n\n"
             "Use the Format tab for text styling and alignment.\n"
-            "Use the Tools tab for cleaning and separators."
+            "Use the Tools tab for cleaning, separators, and word frequency."
         )
         self.editor.textChanged.connect(self._text_changed)
 
-        # Ribbon
         self.ribbon = Ribbon(self.editor)
         self.ribbon.format_acted.connect(self._format)
         self.ribbon.import_docx.connect(self._import_docx)
@@ -1186,39 +806,28 @@ class EditorPage(QWidget):
         self.ribbon.export_opt.connect(self._export_optimised)
         self.ribbon.new_session.connect(self._new_session)
         self.ribbon.save_backup.connect(self._backup)
+        self.ribbon.toggle_dark.connect(self._toggle_dark)
+        self.ribbon.set_goal.connect(self._open_goal_dialog)
         lay.addWidget(self.ribbon)
         lay.addSpacing(12)
 
-        # Session row
         self.sess_row = SessionRow()
         self.sess_row.new_session.connect(self._new_session)
         self.sess_row.session_selected.connect(self._session_selected_by_id)
         lay.addWidget(self.sess_row)
 
-        # Find bar
         self.find_bar = FindBar(); self.find_bar.acted.connect(self._find_replace)
         lay.addWidget(self.find_bar)
 
         lay.addWidget(self.editor, stretch=1)
-
         self.status = StatusBar(); lay.addWidget(self.status)
+
+        # Auto-save timer (every 60 s)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._autosave)
+        self._autosave_timer.start(60_000)
+
         self._refresh_sessions()
-
-    # ── licence ───────────────────────────────────────────────────────────────
-
-    def set_read_only(self, ro: bool):
-        self._read_only = ro
-        self.editor.setReadOnly(ro)
-        self.ribbon.setEnabled(not ro)
-        self.find_bar.setEnabled(not ro)
-        self.sess_row.setEnabled(not ro)
-        if ro: self.status.flash("⚠  Read-only mode — activate your licence to edit")
-
-    def refresh_licence(self):
-        uid  = self._user["id"]
-        days = db.licence_days_remaining(uid)
-        self.set_read_only(days == 0)
-        self._header.banner.update_status(uid)
 
     # ── sessions ──────────────────────────────────────────────────────────────
 
@@ -1235,7 +844,6 @@ class EditorPage(QWidget):
             db.log("SESSION_SWITCHED", self.sess_row.current_name(), sid=sid, uid=self._user["id"])
 
     def _new_session(self):
-        if self._read_only: return
         dlg = NameDialog("New Session", "Session name:", self)
         if dlg.exec() and dlg.value().strip():
             name = dlg.value().strip()
@@ -1246,7 +854,40 @@ class EditorPage(QWidget):
             self._header.set_session(name)
             self.status.flash("✦ Session created")
 
-    # ── text update ───────────────────────────────────────────────────────────
+    # ── auto-save ─────────────────────────────────────────────────────────────
+
+    def _autosave(self):
+        sid  = self._active_id
+        text = self.editor.toPlainText()
+        if not sid or not text.strip():
+            return
+        s = stats(text)
+        db.save_backup(sid, text, f"[auto] {s['words']} words")
+        db.log("BACKUP", "[auto-save]", sid=sid, uid=self._user["id"])
+        self.status.flash("🗄 Auto-saved")
+
+    # ── dark mode ─────────────────────────────────────────────────────────────
+
+    def _toggle_dark(self):
+        self._dark_mode = not self._dark_mode
+        app = QApplication.instance()
+        app.setStyleSheet(_get_qss(dark=self._dark_mode))
+        self.status.flash("🌙 Dark mode ON" if self._dark_mode else "☀ Light mode ON")
+
+    # ── word goal ─────────────────────────────────────────────────────────────
+
+    def _open_goal_dialog(self):
+        dlg = WordGoalDialog(self._word_goal, self)
+        dlg.goal_set.connect(self._apply_goal)
+        dlg.exec()
+
+    def _apply_goal(self, g: int):
+        self._word_goal = g
+        self.status.set_goal(g)
+        self.status.update(self.editor.toPlainText())
+        self.status.flash(f"🎯 Goal set: {g} words" if g else "🎯 Goal cleared")
+
+    # ── text ──────────────────────────────────────────────────────────────────
 
     def _push_undo(self):
         self._undo.append(self.editor.toPlainText())
@@ -1269,11 +910,14 @@ class EditorPage(QWidget):
         self.editor.blockSignals(False)
         _restore_state(self.editor, st)
 
+    def _text_changed(self): self.status.update(self.editor.toPlainText())
+
     # ── format ────────────────────────────────────────────────────────────────
 
     def _format(self, key):
-        if self._read_only: return
         text = self.editor.toPlainText()
+        if key == "word_freq":
+            self._show_word_freq(text); return
         if not text.strip(): return
         self._push_undo()
         if key in self._ALIGN_MAP:
@@ -1287,20 +931,28 @@ class EditorPage(QWidget):
         db.log("FORMAT", key, sid=self._active_id, uid=self._user["id"])
         self.status.flash("✔ Applied")
 
+    def _show_word_freq(self, text):
+        if not text.strip():
+            QMessageBox.information(self, "Word Frequency", "The editor is empty."); return
+        import re, collections
+        words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
+        if not words:
+            QMessageBox.information(self, "Word Frequency", "No words found."); return
+        top = collections.Counter(words).most_common(20)
+        lines = "\n".join(f"  {w:<20} {c}" for w, c in top)
+        QMessageBox.information(self, "Top 20 Words", f"{'WORD':<20} COUNT\n{'─'*28}\n{lines}")
+
     def _find_replace(self, find, replace, case):
-        if self._read_only or not find: return
+        if not find: return
         text = self.editor.toPlainText(); self._push_undo()
         new = find_replace(text, find, replace, case)
         self._set_text(new); self.status.update(new)
         db.log("REPLACE", f"'{find}'→'{replace}'", sid=self._active_id, uid=self._user["id"])
         self.status.flash("✔ Replace done")
 
-    def _text_changed(self): self.status.update(self.editor.toPlainText())
-
     # ── import ────────────────────────────────────────────────────────────────
 
     def _import_docx(self):
-        if self._read_only: return
         path, _ = QFileDialog.getOpenFileName(self, "Import Word Document", "", "Word Documents (*.docx);;All Files (*)")
         if not path: return
         if not docx_ok(): QMessageBox.critical(self, "Error", "pip install python-docx"); return
@@ -1313,7 +965,6 @@ class EditorPage(QWidget):
         except Exception as e: QMessageBox.critical(self, "Import failed", str(e))
 
     def _import_text(self):
-        if self._read_only: return
         path, _ = QFileDialog.getOpenFileName(self, "Import File", "",
             "Files (*.txt *.md *.csv *.html *.htm *.json *.xml *.log *.docx);;All Files (*)")
         if not path: return
@@ -1368,7 +1019,6 @@ class EditorPage(QWidget):
     # ── backup ────────────────────────────────────────────────────────────────
 
     def _backup(self):
-        if self._read_only: return
         sid = self._active_id
         if not sid: QMessageBox.information(self, "No session", "Create a session first."); return
         text = self.editor.toPlainText()
@@ -1438,10 +1088,14 @@ class SessionsPage(QWidget):
         self.preview = QTextEdit(); self.preview.setObjectName("Editor")
         self.preview.setReadOnly(True); self.preview.setMaximumHeight(160)
         self.preview.setPlaceholderText("Select a backup to preview…")
+        btn_row = QHBoxLayout()
         restore_btn = QPushButton("↩  Restore to Editor"); restore_btn.clicked.connect(self._restore)
+        del_bk_btn  = danger_btn("🗑  Delete Backup");     del_bk_btn.clicked.connect(self._delete_backup)
+        btn_row.addWidget(restore_btn); btn_row.addWidget(del_bk_btn)
         right.addWidget(self.backup_list)
         right.addWidget(make_label("PREVIEW", "CardTitle"))
-        right.addWidget(self.preview); right.addWidget(restore_btn)
+        right.addWidget(self.preview)
+        right.addLayout(btn_row)
 
         lw = QWidget(); lw.setLayout(left); rw = QWidget(); rw.setLayout(right)
         sp = QSplitter(Qt.Orientation.Horizontal)
@@ -1451,7 +1105,8 @@ class SessionsPage(QWidget):
     def refresh(self):
         self.sess_list.clear()
         for s in db.get_sessions(self._user["id"]):
-            item = QListWidgetItem(f"  📁  {s['name']}   ·   {s['updated_at']}")
+            bk_count = db.count_backups(s["id"])
+            item = QListWidgetItem(f"  📁  {s['name']}   ·   {s['updated_at']}   ·   {bk_count} backup(s)")
             item.setData(Qt.ItemDataRole.UserRole, s["id"]); self.sess_list.addItem(item)
 
     def _session_selected(self, row):
@@ -1479,6 +1134,17 @@ class SessionsPage(QWidget):
             self.restore.emit(b["content"])
             db.log("RESTORE", f"Backup {b['id']}", uid=self._user["id"])
 
+    def _delete_backup(self):
+        item = self.backup_list.currentItem()
+        if not item: return
+        bid = item.data(Qt.ItemDataRole.UserRole)
+        if QMessageBox.question(self, "Delete Backup", "Permanently delete this backup?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            db.delete_backup(bid)
+            db.log("BACKUP_DELETED", f"id={bid}", uid=self._user["id"])
+            self.refresh()
+
     def _delete_session(self):
         item = self.sess_list.currentItem()
         if not item: return
@@ -1498,14 +1164,17 @@ class LogPage(QWidget):
     def __init__(self, user: dict):
         super().__init__(); self._user = user; self.setObjectName("PageArea")
         lay = QVBoxLayout(self); lay.setContentsMargins(24,24,24,24); lay.setSpacing(12)
-        hdr = QHBoxLayout(); hdr.addWidget(make_label("ACTIVITY LOG", "CardTitle")); hdr.addStretch()
-        ref = ghost_btn("↺  Refresh"); ref.clicked.connect(self.refresh); hdr.addWidget(ref)
+        hdr = QHBoxLayout()
+        hdr.addWidget(make_label("ACTIVITY LOG", "CardTitle"))
+        hdr.addStretch()
+        ref_btn = ghost_btn("↺  Refresh"); ref_btn.clicked.connect(self.refresh); hdr.addWidget(ref_btn)
+        clr_btn = danger_btn("🗑  Clear Log"); clr_btn.clicked.connect(self._clear_log); hdr.addWidget(clr_btn)
         lay.addLayout(hdr)
         self.list = QListWidget(); self.list.setObjectName("LogList"); lay.addWidget(self.list)
         self.refresh()
 
     ICONS = {"FORMAT":"🔧","IMPORT":"⬆","EXPORT":"⬇","EXPORT_OPTIMISED":"⬇✦",
-             "BACKUP":"🗄","RESTORE":"↩","REPLACE":"✏",
+             "BACKUP":"🗄","RESTORE":"↩","REPLACE":"✏","BACKUP_DELETED":"🗑",
              "SESSION_CREATED":"✦","SESSION_DELETED":"🗑","SESSION_SWITCHED":"⊞"}
 
     def refresh(self):
@@ -1514,6 +1183,13 @@ class LogPage(QWidget):
             icon   = self.ICONS.get(l["action"], "·")
             detail = f"   {l['detail']}" if l["detail"] else ""
             self.list.addItem(QListWidgetItem(f"  {icon}  {l['at']}    {l['action']}{detail}"))
+
+    def _clear_log(self):
+        if QMessageBox.question(self, "Clear Log", "Delete all activity log entries?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            db.clear_logs(self._user["id"])
+            self.refresh()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1538,7 +1214,7 @@ class NameDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DocuFlow Enterprise")
+        self.setWindowTitle("DocuFlow — Free Edition")
         self.resize(1340, 880); self.setMinimumSize(680, 560)
         self._user = None
 
@@ -1553,15 +1229,7 @@ class MainWindow(QMainWindow):
             self._root_stack.removeWidget(self._app_shell); self._app_shell.deleteLater()
         self._app_shell = self._build_shell(user)
         self._root_stack.addWidget(self._app_shell); self._root_stack.setCurrentIndex(1)
-
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self._editor_page.undo)
-
-        self._editor_page.refresh_licence()
-
-        # Periodic checks: licence every 60s, expiry warning once on login
-        self._lic_timer = QTimer(self); self._lic_timer.timeout.connect(self._check_licence)
-        self._lic_timer.start(60_000)
-        QTimer.singleShot(2000, self._check_expiry_warning)
 
     def _build_shell(self, user: dict) -> QWidget:
         shell = QWidget(); lay = QHBoxLayout(shell); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
@@ -1572,8 +1240,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.sidebar)
 
         content = QWidget(); cl = QVBoxLayout(content); cl.setContentsMargins(0,0,0,0); cl.setSpacing(0)
-        self.header = Header(); self.header.banner.clicked.connect(self._open_licence)
+        self.header = Header()
         cl.addWidget(self.header)
+
+        # Profile button in header
+        profile_btn = ghost_btn("👤 Profile")
+        profile_btn.clicked.connect(self._open_profile)
+        self.header.layout().itemAt(0).widget().layout().addWidget(profile_btn)
 
         self.stack          = QStackedWidget()
         self._editor_page   = EditorPage(self.header, user)
@@ -1599,27 +1272,10 @@ class MainWindow(QMainWindow):
         self._editor_page.load_text(text)
         self.sidebar._activate("editor"); self._switch("editor")
 
-    def _open_licence(self):
-        dlg = LicenceDialog(self._user, self)
-        dlg.activated.connect(lambda: self._editor_page.refresh_licence())
-        dlg.exec()
-
-    def _check_licence(self):
-        self._editor_page.refresh_licence()
-
-    def _check_expiry_warning(self):
-        """Show a one-time warning popup if licence expires within 7 days."""
-        days = db.licence_days_remaining(self._user["id"])
-        lic  = db.get_active_licence(self._user["id"])
-        if lic and lic.get("kind") != "trial" and 0 < days <= 7:
-            QMessageBox.warning(
-                self, "Licence Expiring Soon",
-                f"Your DocuFlow Enterprise licence expires in {days} day(s).\n\n"
-                "Click the banner at the top to renew and avoid losing access."
-            )
+    def _open_profile(self):
+        dlg = ProfileDialog(self._user, self); dlg.exec()
 
     def _logout(self):
-        if hasattr(self, "_lic_timer"): self._lic_timer.stop()
         self._user = None; self._root_stack.setCurrentIndex(0)
 
     def resizeEvent(self, event: QResizeEvent):
@@ -1629,18 +1285,10 @@ class MainWindow(QMainWindow):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  STYLESHEET  — fully embedded (PyInstaller-safe)
+#  STYLESHEET  (light + dark variants)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _get_qss() -> str:
-    # Always try disk first (dev mode); fall back to embedded copy
-    qss_path = os.path.join(os.path.dirname(__file__), "styles", "theme.qss")
-    if os.path.exists(qss_path):
-        try:
-            with open(qss_path, encoding="utf-8") as f: return f.read()
-        except Exception: pass
-    # ── Embedded fallback (exact copy of theme.qss) ───────────────────────────
-    return """
+_LIGHT_QSS = """
 * { outline: none; }
 QWidget { background-color: #F0F4F1; color: #0A1A0F; font-family: "Outfit","DM Sans","Segoe UI",sans-serif; font-size: 13px; }
 QMainWindow { background-color: #0A1A0F; }
@@ -1658,11 +1306,6 @@ QLabel      { background: transparent; }
 #SidebarLogout { background-color: transparent; color: #E08090; border: 1px solid #5A2030; border-radius: 6px; margin: 8px 14px; padding: 7px 16px; font-size: 11px; font-weight: 600; }
 #SidebarLogout:hover { background-color: #5A2030; color: #FFFFFF; border-color: #FF4060; }
 #sidebar_footer { color: #2ECC71; font-size: 9px; padding: 12px 20px; border-top: 2px solid #1A4A2E; }
-#LicenceBannerOk      { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1A8040,stop:1 #22A050); min-height:34px; max-height:34px; border-bottom: 2px solid #0D5C2E; }
-#LicenceBannerWarn    { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #CC3300,stop:1 #E04010); min-height:34px; max-height:34px; border-bottom: 2px solid #991500; }
-#LicenceBannerExpired { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #AA0000,stop:1 #CC1010); min-height:34px; max-height:34px; border-bottom: 3px solid #660000; }
-#LicenceBannerTrial   { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1A3A9A,stop:1 #1E55C0); min-height:34px; max-height:34px; border-bottom: 2px solid #0D2470; }
-#BannerLabel { color: #000000; font-size: 12px; font-weight: 800; letter-spacing: 0.3px; text-shadow: none; }
 #HeaderTitleRow { background-color: #FFFFFF; border-bottom: 1px solid #D8EAE0; min-height:52px; max-height:52px; }
 #page_title { font-size: 16px; font-weight: 800; color: #071610; }
 #session_pill { background-color: #E8F5EE; color: #0D5C2E; border: 1.5px solid #A8D8B8; border-radius: 20px; padding: 4px 14px; font-size: 11px; font-weight: 700; }
@@ -1677,11 +1320,9 @@ QLabel      { background: transparent; }
 #RibbonBtn { background-color: transparent; color: #1A4D2E; border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; font-size: 11px; font-weight: 600; min-height:30px; min-width:46px; }
 #RibbonBtn:hover { background-color: #E0F0E8; border-color: #A8D8B8; }
 #RibbonBtn:pressed { background-color: #C8E8D0; }
-#RibbonBtn[active="true"] { background-color: #1B6B3A; color: #FFFFFF; }
 #RibbonBtnPrimary { background-color: #1B6B3A; color: #FFFFFF; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 700; min-height:34px; }
 #RibbonBtnPrimary:hover { background-color: #22874A; }
 #SessionRow { background-color: #D6F5E3; border-bottom: 1px solid #A8D8B8; padding: 6px 24px; min-height:44px; max-height:44px; }
-#RichBar { background-color: #FFFFFF; border-bottom: 1px solid #E8F0EA; padding: 0 24px; min-height:44px; max-height:44px; }
 #GroupLabel { color: #5A8A6A; font-size: 8px; font-weight: 800; letter-spacing: 2px; margin-right: 6px; }
 #RichBtnBold,#RichBtnItalic,#RichBtnUnder { background-color:#F0F6F2; color:#1A4D2E; border:1px solid #C8DDD0; border-radius:5px; padding:5px; min-height:30px; }
 #RichBtnBold { font-weight:900; font-size:14px; min-width:34px; }
@@ -1753,36 +1394,140 @@ QSplitter::handle:vertical   { height:1px; }
 #AuthToggle:hover { color:#071610; }
 #AuthError   { color:#C03030; font-size:12px; font-weight:600; }
 #AuthSuccess { color:#1B8040; font-size:12px; font-weight:600; }
-#LicenceActive  { color:#000000; background-color:#90EE90; font-weight:700; font-size:13px; padding:10px 12px; border-radius:6px; }
-#LicenceTrial   { color:#000000; background-color:#FFD700; font-weight:700; font-size:13px; padding:10px 12px; border-radius:6px; }
-#LicenceExpired { color:#000000; background-color:#FF6B6B; font-weight:700; font-size:13px; padding:10px 12px; border-radius:6px; }
 #PayHdr  { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #071610,stop:1 #0D2419); min-height:80px; }
 #PayLogo { color:#FFFFFF; font-size:22px; font-weight:900; }
 #PayLogoSub { color:#52A875; font-size:13px; }
-#PayPrice   { color:#2ECC71; font-size:22px; font-weight:900; }
 #PayBody    { background-color:#FFFFFF; }
 #PayFooter  { background-color:#F5F9F5; border-top:1px solid #D0E8D8; }
 #PayDesc    { color:#1A3528; font-size:13px; }
-#PaySectionLabel { color:#4A8060; font-size:9px; font-weight:800; letter-spacing:2px; }
-#PayInstructions { background-color:#F5F9F5; border:1px solid #C0D8C8; border-radius:8px; padding:14px 18px; color:#1A3528; font-size:12px; min-height:90px; }
-#PayStatus    { color:#1B6B3A; font-size:12px; font-weight:700; }
-#PayFooterNote{ color:#5A8A6A; font-size:11px; }
 #PayConfirmBtn { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #22874A,stop:1 #1B6B3A); color:#FFFFFF; border:none; border-radius:8px; padding:8px 0; font-size:14px; font-weight:800; min-height:36px; }
 #PayConfirmBtn:hover    { background-color:#2ECC71; color:#071610; }
-#PayConfirmBtn:disabled { background-color:#A8C8B0; color:#FFFFFF; }
-#LicKeyInput { background-color:#F5F9F5; border:2px solid #C0D8C8; border-radius:10px; padding:16px 24px; font-size:22px; font-weight:800; color:#071610; letter-spacing:5px; min-height:60px; }
-#LicKeyInput:focus { border-color:#1B8040; background-color:#FFFFFF; }
-#FmtBtn { background-color:#FFFFFF; color:#1A4D2E; border:1px solid #C0D8C8; border-radius:5px; padding:4px 10px; font-size:11px; font-weight:600; min-height:28px; min-width:48px; }
-#FmtBtn:hover   { background-color:#1B6B3A; color:#FFFFFF; }
-#FmtBtn:pressed { background-color:#145C30; }
+#PayFooterNote{ color:#5A8A6A; font-size:11px; }
 """
 
-def _load_qss(app): app.setStyleSheet(_get_qss())
+_DARK_QSS = """
+* { outline: none; }
+QWidget { background-color: #12171A; color: #D0D8DC; font-family: "Outfit","DM Sans","Segoe UI",sans-serif; font-size: 13px; }
+QMainWindow { background-color: #0A0E10; }
+QDialog     { background-color: #1C2228; }
+QLabel      { background: transparent; }
+#Sidebar { background-color: #0A0E10; min-width: 220px; max-width: 220px; border-right: 3px solid #27AE60; }
+#logo_wrap { background: #0D1418; padding: 26px 20px 22px 20px; border-bottom: 3px solid #27AE60; }
+#logo_name { color: #FFFFFF; font-size: 22px; font-weight: 800; }
+#logo_tag  { color: #27AE60; font-size: 8px; letter-spacing: 5px; font-weight: 700; margin-top: 3px; }
+#SidebarUser { color: #A0B8B0; font-size: 12px; font-weight: 700; padding: 12px 20px 10px 20px; border-bottom: 1px solid #253030; background-color: #0D1418; }
+#nav_section_label { color: #27AE60; font-size: 8px; letter-spacing: 3px; font-weight: 800; padding: 14px 20px 6px 20px; }
+#NavBtn { background-color: transparent; color: #608878; border: none; padding: 12px 20px; text-align: left; font-size: 13px; font-weight: 600; border-left: 4px solid transparent; border-bottom: 1px solid #1C2828; }
+#NavBtn:hover { background-color: #1A2828; color: #FFFFFF; border-left: 4px solid #27AE60; }
+#NavBtn[active="true"] { background-color: #1A2828; color: #FFFFFF; font-weight: 800; border-left: 4px solid #27AE60; }
+#SidebarLogout { background-color: transparent; color: #C07080; border: 1px solid #4A2030; border-radius: 6px; margin: 8px 14px; padding: 7px 16px; font-size: 11px; font-weight: 600; }
+#sidebar_footer { color: #2A5040; font-size: 9px; padding: 12px 20px; }
+#HeaderTitleRow { background-color: #1C2228; border-bottom: 1px solid #253030; min-height:52px; max-height:52px; }
+#page_title { font-size: 16px; font-weight: 800; color: #D0D8DC; }
+#session_pill { background-color: #1A2828; color: #7FC89A; border: 1.5px solid #2A5040; border-radius: 20px; padding: 4px 14px; font-size: 11px; }
+#RibbonTabBar { background-color: #1C2228; border-bottom: 2px solid #27AE60; min-height:28px; max-height:28px; }
+#RibbonTab { background-color: transparent; color: #608878; border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 4px 18px; font-size: 11px; font-weight: 600; min-height:28px; margin-bottom:-2px; }
+#RibbonTab:hover { color: #D0D8DC; background-color: #253030; }
+#RibbonTab[active="true"] { color: #D0D8DC; font-weight: 800; border-bottom: 3px solid #27AE60; }
+#RibbonPanel { background-color: #1C2228; border-bottom: 2px solid #253030; padding: 4px 8px; min-height:90px; max-height:90px; }
+#RibbonGroup { border-right: 2px solid #253030; padding-right: 10px; margin-right: 4px; }
+#RibbonGroupLast { padding-right: 6px; }
+#RibbonGroupLabel { color: #27AE60; font-size: 8px; font-weight: 800; letter-spacing: 2px; margin-top: 2px; background-color: transparent; }
+#RibbonBtn { background-color: transparent; color: #90B8A8; border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; font-size: 11px; font-weight: 600; min-height:30px; min-width:46px; }
+#RibbonBtn:hover { background-color: #253030; border-color: #2A5040; }
+#RibbonBtnPrimary { background-color: #1B6B3A; color: #FFFFFF; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 700; min-height:34px; }
+#RibbonBtnPrimary:hover { background-color: #22874A; }
+#SessionRow { background-color: #1C2228; border-bottom: 1px solid #253030; padding: 6px 24px; min-height:44px; max-height:44px; }
+#GroupLabel { color: #608878; font-size: 8px; font-weight: 800; letter-spacing: 2px; margin-right: 6px; }
+#RichBtnBold,#RichBtnItalic,#RichBtnUnder { background-color:#253030; color:#90B8A8; border:1px solid #2A5040; border-radius:5px; padding:5px; min-height:30px; }
+#RichBtnBold { font-weight:900; font-size:14px; min-width:34px; }
+#RichBtnItalic { font-style:italic; font-size:14px; min-width:34px; }
+#RichBtnUnder { text-decoration:underline; font-size:14px; min-width:34px; }
+#RichBtnBold:checked,#RichBtnItalic:checked,#RichBtnUnder:checked { background-color:#27AE60; color:#FFFFFF; }
+#FontCombo { min-width:155px; max-width:180px; font-size:12px; }
+#FontSizeSpin { min-width:50px; max-width:50px; font-size:12px; font-weight:700; }
+#FindBar { background-color: #1C2228; border-bottom: 1px solid #253030; padding: 7px 24px; min-height:44px; max-height:44px; }
+#FindInput,#ReplaceInput { background-color:#253030; border:1px solid #2A5040; border-radius:5px; padding:5px 10px; color:#D0D8DC; font-size:12px; min-width:160px; max-width:180px; }
+#ReplaceBtn { background-color:#1B6B3A; color:#FFFFFF; border:none; border-radius:5px; padding:5px 16px; font-size:12px; font-weight:700; min-height:30px; }
+#CaseCheck { color:#608878; font-size:11px; }
+#Editor { background-color:#1A1E22; color:#C8D8D0; border:none; padding:28px 40px; font-family:"JetBrains Mono","Cascadia Code","Fira Code","Consolas",monospace; font-size:13px; selection-background-color:#27AE60; selection-color:#FFFFFF; }
+#StatusBar { background-color:#0A0E10; border-top:1px solid #1C2828; min-height:28px; max-height:28px; padding:0 24px; }
+#StatLabel  { color:#608878; font-size:11px; font-weight:600; }
+#FlashLabel { color:#27AE60; font-size:11px; font-weight:700; }
+#PageArea   { background-color:#12171A; }
+#CardTitle  { font-size:12px; font-weight:800; color:#D0D8DC; }
+#SessionList,#BackupList,#LogList { background-color:#1C2228; border:1.5px solid #253030; border-radius:8px; padding:4px; }
+#SessionList::item,#BackupList::item,#LogList::item { padding:10px 14px; border-radius:6px; color:#90B8A8; font-size:12px; border-bottom:1px solid #1C2828; }
+#SessionList::item:selected,#BackupList::item:selected,#LogList::item:selected { background-color:#253030; color:#FFFFFF; font-weight:700; }
+QPushButton { background-color:#1B6B3A; color:#FFFFFF; border:none; border-radius:6px; padding:7px 18px; font-size:12px; font-weight:700; min-height:32px; }
+QPushButton:hover   { background-color:#22874A; }
+QPushButton#ghost   { background-color:transparent; color:#27AE60; border:1.5px solid #2A5040; font-weight:600; }
+QPushButton#ghost:hover { background-color:#253030; }
+QPushButton#danger  { background-color:transparent; color:#C05050; border:1.5px solid #5A2030; font-weight:600; }
+QPushButton#danger:hover { background-color:#C05050; color:#FFFFFF; }
+QLineEdit { background-color:#253030; border:1.5px solid #2A5040; border-radius:6px; padding:7px 12px; color:#D0D8DC; font-size:13px; }
+QLineEdit:focus { border-color:#27AE60; }
+QComboBox { background-color:#253030; border:1.5px solid #2A5040; border-radius:6px; padding:6px 12px; color:#D0D8DC; font-size:12px; min-height:30px; }
+QComboBox::drop-down { border:none; width:22px; }
+QComboBox QAbstractItemView { background:#253030; border:1px solid #2A5040; selection-background-color:#1B6B3A; selection-color:#FFFFFF; padding:4px; }
+QSpinBox { background-color:#253030; border:1.5px solid #2A5040; border-radius:6px; padding:4px 8px; color:#D0D8DC; font-size:12px; }
+QScrollBar:vertical { background:transparent; width:6px; }
+QScrollBar::handle:vertical { background:#2A5040; border-radius:3px; min-height:28px; }
+QScrollBar::handle:vertical:hover { background:#27AE60; }
+QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
+QScrollBar:horizontal { height:0; }
+QCheckBox { color:#608878; font-size:12px; }
+QCheckBox::indicator { width:15px; height:15px; border:1.5px solid #2A5040; border-radius:4px; background:#253030; }
+QCheckBox::indicator:checked { background-color:#27AE60; border-color:#27AE60; }
+QToolTip { background-color:#0A0E10; color:#90B8A8; border:1px solid #2A5040; border-radius:5px; padding:5px 10px; font-size:11px; }
+QSplitter::handle { background-color:#253030; }
+#AuthPage    { background-color:#12171A; }
+#AuthBrand   { background:#0A0E10; }
+#AuthLogo    { color:#FFFFFF; font-size:34px; font-weight:900; }
+#AuthLogoTag { color:#27AE60; font-size:9px; letter-spacing:5px; font-weight:800; }
+#AuthTagline { color:#608878; font-size:14px; }
+#AuthFeature { color:#27AE60; font-size:12px; font-weight:600; }
+#AuthFooter  { color:#2A5040; font-size:10px; }
+#AuthFormWrap  { background-color:#1C2228; }
+#AuthFormTitle { font-size:24px; font-weight:800; color:#D0D8DC; }
+#AuthSub       { font-size:13px; color:#608878; }
+#AuthFieldLabel{ font-size:11px; font-weight:700; color:#90B8A8; }
+#AuthInput  { background-color:#253030; border:1.5px solid #2A5040; border-radius:8px; padding:12px 16px; font-size:14px; color:#D0D8DC; min-height:46px; }
+#AuthInput:focus { border-color:#27AE60; }
+#AuthBtn    { background-color:#1B6B3A; color:#FFFFFF; border:none; border-radius:8px; padding:13px 0; font-size:14px; font-weight:800; min-height:50px; }
+#AuthBtn:hover   { background-color:#22874A; }
+#AuthToggle { background:transparent; border:none; color:#27AE60; font-size:12px; font-weight:600; min-height:0; padding:0; }
+#AuthError   { color:#E07070; font-size:12px; font-weight:600; }
+#AuthSuccess { color:#27AE60; font-size:12px; font-weight:600; }
+#PayHdr  { background:#0A0E10; min-height:80px; }
+#PayLogo { color:#FFFFFF; font-size:22px; font-weight:900; }
+#PayLogoSub { color:#27AE60; font-size:13px; }
+#PayBody    { background-color:#1C2228; }
+#PayFooter  { background-color:#12171A; border-top:1px solid #253030; }
+#PayDesc    { color:#90B8A8; font-size:13px; }
+#PayConfirmBtn { background-color:#1B6B3A; color:#FFFFFF; border:none; border-radius:8px; padding:8px 0; font-size:14px; font-weight:800; min-height:36px; }
+#PayConfirmBtn:hover    { background-color:#22874A; }
+#PayFooterNote{ color:#608878; font-size:11px; }
+"""
+
+
+def _get_qss(dark: bool = False) -> str:
+    qss_path = os.path.join(os.path.dirname(__file__), "styles", "theme_dark.qss" if dark else "theme.qss")
+    if os.path.exists(qss_path):
+        try:
+            with open(qss_path, encoding="utf-8") as f: return f.read()
+        except Exception:
+            pass
+    return _DARK_QSS if dark else _LIGHT_QSS
+
+
+def _load_qss(app, dark=False): app.setStyleSheet(_get_qss(dark))
+
 
 def run():
     db.init()
     app = QApplication(sys.argv)
-    app.setApplicationName("DocuFlow Enterprise")
+    app.setApplicationName("DocuFlow")
     _load_qss(app)
     win = MainWindow(); win.show()
     sys.exit(app.exec())
